@@ -1,0 +1,20 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# R
+*.Rhistory
+*.RData
+*.Rproj.user/
+*.Rcheck/
+*.tar.gz
+*.pdf
+Rplots.pdf
+
+# Output
+output/
+out/
+
+# Claude
+.claude/
