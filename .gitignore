@@ -16,5 +16,8 @@ Rplots.pdf
 output/
 out/
 
+# Input data
+input_files/
+
 # Claude
 .claude/
