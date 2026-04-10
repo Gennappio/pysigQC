@@ -15,7 +15,7 @@ echo "Job ID: $SLURM_JOB_ID"
 echo "Node: $SLURMD_NODENAME"
 echo "Start time: $(date)"
 
-cd /home/Abbruzzese/pysigQC/sigQC-master/input_files
+cd "$(dirname "$0")/../input_files"
 
 Rscript run_corrected_with_timing.R
 
