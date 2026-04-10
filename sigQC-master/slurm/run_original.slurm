@@ -9,12 +9,9 @@
 #SBATCH --mail-type=END
 #SBATCH --mail-user=gennaro.abbruzzese@unibocconi.it
 
-set -e  # exit immediately on any error
+set -e
 echo "start"
-echo "Running original sigQC (unmodified) on BRCA paper example data"
-echo "Job ID: $SLURM_JOB_ID"
-echo "Node: $SLURMD_NODENAME"
-echo "Start time: $(date)"
+echo "Job ID: $SLURM_JOB_ID  |  Node: $SLURMD_NODENAME  |  Start: $(date)"
 
 SCRIPT_DIR="$(realpath "${SLURM_SUBMIT_DIR}")"
 ENV_NAME="sigqc_env"
@@ -22,65 +19,47 @@ ENV_NAME="sigqc_env"
 # ---- Initialize conda ----
 source "$(conda info --base)/etc/profile.d/conda.sh"
 
-# ---- Create minimal conda env with just R (if it doesn't exist) ----
+# ---- Create conda environment if it doesn't exist ----
 if ! conda env list | grep -q "^${ENV_NAME} "; then
-  echo "[INSTALL] Creating conda environment with R..."
-  conda create -y -n "${ENV_NAME}" -c conda-forge "r-base=4.3.3" "libblas=*=*openblas*"
+  echo "[INSTALL] Creating conda environment..."
+  conda create -y -n "${ENV_NAME}" -c conda-forge -c bioconda \
+    "r-base=4.3.3" "libblas=*=*openblas*" \
+    r-mass r-lattice r-nnet r-class r-matrix \
+    zlib libxml2 hdf5 \
+    r-gridgraphics r-gplots r-fmsb r-moments r-mclust r-circlize r-biocmanager \
+    bioconductor-complexheatmap bioconductor-gsva
+  echo "[INSTALL] Conda environment created."
+else
+  echo "[INSTALL] Conda environment '${ENV_NAME}' already exists, skipping."
 fi
 
 conda activate "${ENV_NAME}"
 export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"
 
-# ---- Install base R recommended packages via conda (stripped from conda r-base) ----
-conda install -y -c conda-forge r-mass r-lattice r-nnet r-class
+# ---- Install biclust and its CRAN dependencies (skipped if present) ----
+if ! Rscript -e 'library(biclust)' &>/dev/null; then
+  echo "[INSTALL] Installing biclust dependencies..."
+  Rscript -e 'install.packages(c("flexclust","additivityTests","tidyr","ggplot2"), repos="https://cran.r-project.org/")'
+  echo "[INSTALL] Installing biclust from CRAN archive..."
+  Rscript -e 'install.packages("https://cran.r-project.org/src/contrib/Archive/biclust/biclust_2.0.3.1.tar.gz", repos=NULL, type="source")'
+else
+  echo "[INSTALL] biclust already installed, skipping."
+fi
 
-# ---- Install remaining R packages via R's own package manager (skipped if present) ----
-echo "[INSTALL] Checking/installing R packages..."
-
-Rscript -e '
-  # CRAN packages
-  cran_pkgs <- c("gridGraphics","gplots","fmsb","moments","mclust","circlize","BiocManager")
-  missing <- cran_pkgs[!sapply(cran_pkgs, requireNamespace, quietly=TRUE)]
-  if (length(missing) > 0) {
-    cat("Installing CRAN packages:", paste(missing, collapse=", "), "\n")
-    install.packages(missing, repos="https://cran.r-project.org/")
-  }
-
-  # biclust (archived on CRAN — install from source tarball)
-  if (!requireNamespace("biclust", quietly=TRUE)) {
-    cat("Installing biclust from CRAN archive...\n")
-    tmp <- tempfile(fileext=".tar.gz")
-    download.file("https://cran.r-project.org/src/contrib/Archive/biclust/biclust_2.0.3.1.tar.gz", tmp)
-    install.packages(tmp, repos=NULL, type="source")
-  }
-
-  # Bioconductor packages
-  bioc_pkgs <- c("ComplexHeatmap","GSVA")
-  missing_bioc <- bioc_pkgs[!sapply(bioc_pkgs, requireNamespace, quietly=TRUE)]
-  if (length(missing_bioc) > 0) {
-    cat("Installing Bioconductor packages:", paste(missing_bioc, collapse=", "), "\n")
-    BiocManager::install(missing_bioc, ask=FALSE)
-  }
-
-  cat("All R packages OK.\n")
-'
-
-# ---- Install sigQC from source ----
+# ---- Install sigQC from source (skipped if present) ----
 if ! Rscript -e 'library(sigQC)' &>/dev/null; then
-  echo "[INSTALL] Installing sigQC from source..."
+  echo "[INSTALL] Installing sigQC..."
   R CMD INSTALL "${SCRIPT_DIR}/.."
 else
-  echo "[INSTALL] sigQC already installed."
+  echo "[INSTALL] sigQC already installed, skipping."
 fi
 
 echo "[INSTALL] Done."
 
 # ---- Run analysis ----
 INPUT_DIR="${SCRIPT_DIR}/../input_files"
-echo "[RUN] Changing to: ${INPUT_DIR}"
+echo "[RUN] Changing to: $(realpath ${INPUT_DIR})"
 cd "${INPUT_DIR}"
-echo "[RUN] Working directory: $(pwd)"
-echo "[RUN] Files present: $(ls *.R)"
 
 Rscript run_original_with_timing.R
 
