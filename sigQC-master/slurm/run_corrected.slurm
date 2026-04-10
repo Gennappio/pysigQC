@@ -9,6 +9,7 @@
 #SBATCH --mail-type=END
 #SBATCH --mail-user=gennaro.abbruzzese@unibocconi.it
 
+set -e  # exit immediately on any error
 echo "start"
 echo "Running corrected sigQC (8 bug fixes applied) on BRCA paper example data"
 echo "Job ID: $SLURM_JOB_ID"
@@ -77,7 +78,11 @@ fi
 echo "[INSTALL] Done."
 
 # ---- Run analysis ----
-cd "${SCRIPT_DIR}/../input_files"
+INPUT_DIR="${SCRIPT_DIR}/../input_files"
+echo "[RUN] Changing to: ${INPUT_DIR}"
+cd "${INPUT_DIR}"
+echo "[RUN] Working directory: $(pwd)"
+echo "[RUN] Files present: $(ls *.R)"
 
 Rscript run_corrected_with_timing.R
 
