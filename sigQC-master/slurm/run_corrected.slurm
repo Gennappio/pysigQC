@@ -15,7 +15,7 @@ echo "Job ID: $SLURM_JOB_ID"
 echo "Node: $SLURMD_NODENAME"
 echo "Start time: $(date)"
 
-SCRIPT_DIR="${SLURM_SUBMIT_DIR}"
+SCRIPT_DIR="$(realpath "${SLURM_SUBMIT_DIR}")"
 ENV_NAME="sigqc_env"
 
 # ---- Initialize conda ----
