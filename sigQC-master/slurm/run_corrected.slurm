@@ -30,7 +30,10 @@ fi
 conda activate "${ENV_NAME}"
 export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"
 
-# ---- Install R packages via R's own package manager (skipped if present) ----
+# ---- Install base R recommended packages via conda (stripped from conda r-base) ----
+conda install -y -c conda-forge r-mass r-lattice r-nnet r-class
+
+# ---- Install remaining R packages via R's own package manager (skipped if present) ----
 echo "[INSTALL] Checking/installing R packages..."
 
 Rscript -e '
