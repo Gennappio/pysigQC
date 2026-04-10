@@ -43,6 +43,7 @@ else
 fi
 
 conda activate "${ENV_NAME}"
+export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"
 
 # ---- Install sigQC from source into the conda R ----
 # Note: run_corrected_with_timing.R sources R_corrected/ directly, so the installed

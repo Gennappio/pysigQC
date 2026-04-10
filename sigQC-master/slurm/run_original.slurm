@@ -43,6 +43,7 @@ else
 fi
 
 conda activate "${ENV_NAME}"
+export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"
 
 # ---- Install sigQC from source into the conda R (skipped if already installed) ----
 if ! Rscript -e 'library(sigQC)' &>/dev/null; then
