@@ -9,7 +9,7 @@ from pysigqc.eval_expr import compute_expr
 
 def test_structure(signatures, datasets, names_sigs, names_datasets):
     result = compute_expr(signatures, names_sigs, datasets, names_datasets)
-    assert set(result.keys()) == {"radar_values", "na_proportions", "expr_proportions", "thresholds"}
+    assert set(result.keys()) == {"radar_values", "na_proportions", "expr_proportions", "thresholds", "elapsed_seconds"}
 
 
 def test_2_metrics(signatures, datasets, names_sigs, names_datasets):

@@ -7,6 +7,8 @@ prop_top_10_percent, prop_top_25_percent, prop_top_50_percent, coeff_of_var_rati
 
 from __future__ import annotations
 
+import time
+
 import numpy as np
 import pandas as pd
 from scipy import stats as sp_stats
@@ -28,7 +30,9 @@ def compute_var(
         all_sd: nested dict [sig][dataset] -> Series of per-gene SD (all genes)
         all_mean: nested dict [sig][dataset] -> Series of per-gene mean (all genes)
         inter: nested dict [sig][dataset] -> list of intersected gene names
+        elapsed_seconds: wall-clock time
     """
+    _t0 = time.perf_counter()
     radar_values: dict = {}
     mean_sd_tables: dict = {}
     all_sd: dict = {}
@@ -108,4 +112,5 @@ def compute_var(
         "all_sd": all_sd,
         "all_mean": all_mean,
         "inter": inter_genes,
+        "elapsed_seconds": time.perf_counter() - _t0,
     }

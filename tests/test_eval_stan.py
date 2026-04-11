@@ -9,7 +9,7 @@ from pysigqc.eval_stan import compute_stan
 
 def test_structure(signatures, datasets, names_sigs, names_datasets):
     result = compute_stan(signatures, names_sigs, datasets, names_datasets)
-    assert set(result.keys()) == {"radar_values", "med_scores", "z_transf_scores"}
+    assert set(result.keys()) == {"radar_values", "med_scores", "z_transf_scores", "elapsed_seconds"}
 
 
 def test_metric_range(signatures, datasets, names_sigs, names_datasets):

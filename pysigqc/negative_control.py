@@ -7,6 +7,7 @@ optional joblib parallelism, no disk I/O roundtrip.
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import numpy as np
@@ -110,7 +111,9 @@ def run_negative_control(
     Returns dict with:
         negative_controls: dict [dataset][sig] -> {summary, metrics_table}
         permutation_controls: dict [dataset][sig] -> {summary, metrics_table}
+        elapsed_seconds: wall-clock time
     """
+    _t0 = time.perf_counter()
     rng = np.random.default_rng(seed)
     neg_results: dict = {}
     perm_results: dict = {}
@@ -175,4 +178,5 @@ def run_negative_control(
     return {
         "negative_controls": neg_results,
         "permutation_controls": perm_results,
+        "elapsed_seconds": time.perf_counter() - _t0,
     }

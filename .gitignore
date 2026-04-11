@@ -19,5 +19,20 @@ out/
 # Input data
 input_files/
 
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+*.egg
+.eggs/
+dist/
+build/
+.pytest_cache/
+
+# R binary fixtures (reproducible from generator scripts)
+*.rds
+*.Rds
+
 # Claude
 .claude/

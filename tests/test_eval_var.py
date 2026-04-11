@@ -10,7 +10,7 @@ from pysigqc.eval_var import compute_var
 def test_compute_var_structure(signatures, datasets, names_sigs, names_datasets):
     result = compute_var(signatures, names_sigs, datasets, names_datasets)
 
-    assert set(result.keys()) == {"radar_values", "mean_sd_tables", "all_sd", "all_mean", "inter"}
+    assert set(result.keys()) == {"radar_values", "mean_sd_tables", "all_sd", "all_mean", "inter", "elapsed_seconds"}
     for sig in names_sigs:
         assert sig in result["radar_values"]
         for ds in names_datasets:

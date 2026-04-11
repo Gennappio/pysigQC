@@ -7,6 +7,8 @@ raw median scores and z-transformed median scores).
 
 from __future__ import annotations
 
+import time
+
 import numpy as np
 import pandas as pd
 from scipy import stats as sp_stats
@@ -26,7 +28,9 @@ def compute_stan(
         radar_values: nested dict [sig][dataset] -> {"standardization_comp": rho}
         med_scores: nested dict [sig][dataset] -> array of raw median scores per sample
         z_transf_scores: nested dict [sig][dataset] -> array of z-transformed median scores
+        elapsed_seconds: wall-clock time
     """
+    _t0 = time.perf_counter()
     radar_values: dict = {}
     med_scores_all: dict = {}
     z_transf_scores_all: dict = {}
@@ -63,4 +67,5 @@ def compute_stan(
         "radar_values": radar_values,
         "med_scores": med_scores_all,
         "z_transf_scores": z_transf_scores_all,
+        "elapsed_seconds": time.perf_counter() - _t0,
     }

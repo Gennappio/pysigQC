@@ -6,6 +6,8 @@ Produces 1 radar metric: autocor_median (median of Spearman gene-gene correlatio
 
 from __future__ import annotations
 
+import time
+
 import numpy as np
 import pandas as pd
 from scipy import stats as sp_stats
@@ -25,7 +27,9 @@ def compute_compactness(
         radar_values: nested dict [sig][dataset] -> {"autocor_median": val}
         autocor_matrices: nested dict [sig][dataset] -> gene-gene Spearman correlation matrix
         rank_product_tables: dict (empty in Python — RankProd not ported)
+        elapsed_seconds: wall-clock time
     """
+    _t0 = time.perf_counter()
     radar_values: dict = {}
     autocor_matrices: dict = {}
 
@@ -73,4 +77,5 @@ def compute_compactness(
         "radar_values": radar_values,
         "autocor_matrices": autocor_matrices,
         "rank_product_tables": {},
+        "elapsed_seconds": time.perf_counter() - _t0,
     }

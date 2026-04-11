@@ -33,7 +33,7 @@ def _build_radar_values(signatures, datasets, names_sigs, names_datasets):
 def test_structure(signatures, datasets, names_sigs, names_datasets):
     rv = _build_radar_values(signatures, datasets, names_sigs, names_datasets)
     result = compute_radar(rv, names_sigs, names_datasets)
-    assert set(result.keys()) == {"radar_plot_mat", "output_table", "areas", "legend_labels", "radarplot_rownames"}
+    assert set(result.keys()) == {"radar_plot_mat", "output_table", "areas", "legend_labels", "radarplot_rownames", "elapsed_seconds"}
 
 
 def test_output_dimensions(signatures, datasets, names_sigs, names_datasets):

@@ -6,6 +6,8 @@ Assembles 14 metrics per sig-dataset pair into an output table + area ratios.
 
 from __future__ import annotations
 
+import time
+
 import numpy as np
 import pandas as pd
 
@@ -32,7 +34,9 @@ def compute_radar(
         areas: array of area ratios for each sig-dataset combination
         legend_labels: list of formatted labels
         radarplot_rownames: list of row name strings
+        elapsed_seconds: wall-clock time
     """
+    _t0 = time.perf_counter()
     n_metrics = len(ALL_METRICS)
     rows = []
     row_names = []
@@ -78,4 +82,5 @@ def compute_radar(
         "areas": areas,
         "legend_labels": legend_parts,
         "radarplot_rownames": row_names,
+        "elapsed_seconds": time.perf_counter() - _t0,
     }

@@ -6,6 +6,8 @@ Produces 2 radar metrics: med_prop_na, med_prop_above_med.
 
 from __future__ import annotations
 
+import time
+
 import numpy as np
 import pandas as pd
 
@@ -26,7 +28,9 @@ def compute_expr(
         na_proportions: nested dict [sig][dataset] -> Series of per-gene NA proportions
         expr_proportions: nested dict [sig][dataset] -> Series of per-gene expression proportions
         thresholds: dict of per-dataset expression thresholds
+        elapsed_seconds: wall-clock time
     """
+    _t0 = time.perf_counter()
     radar_values: dict = {}
     na_proportions: dict = {}
     expr_proportions: dict = {}
@@ -105,4 +109,5 @@ def compute_expr(
         "na_proportions": na_proportions,
         "expr_proportions": expr_proportions,
         "thresholds": thresholds,
+        "elapsed_seconds": time.perf_counter() - _t0,
     }

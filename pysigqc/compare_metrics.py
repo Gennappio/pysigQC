@@ -10,6 +10,7 @@ Produces 4 radar metrics: rho_mean_med, rho_pca1_med, rho_mean_pca1, prop_pca1_v
 
 from __future__ import annotations
 
+import time
 import warnings
 
 import numpy as np
@@ -35,7 +36,9 @@ def compute_metrics(
         pca_results: nested dict [sig][dataset] -> dict with pca_obj, props_of_variances
         score_cor_mats: dict of scoring correlation matrices
         mixture_models: nested dict [sig][dataset] -> dict with model results
+        elapsed_seconds: wall-clock time
     """
+    _t0 = time.perf_counter()
     radar_values: dict = {}
     scores_all: dict = {}
     pca_results: dict = {}
@@ -145,4 +148,5 @@ def compute_metrics(
         "pca_results": pca_results,
         "score_cor_mats": score_cor_mats,
         "mixture_models": mixture_models,
+        "elapsed_seconds": time.perf_counter() - _t0,
     }

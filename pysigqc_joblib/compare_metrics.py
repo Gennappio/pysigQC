@@ -1,0 +1,175 @@
+"""Compare scoring metrics — IncrementalPCA for large datasets.
+
+Same API and return types as pysigqc.compare_metrics.compute_metrics().
+
+Key optimization: uses IncrementalPCA for datasets with >50k samples to avoid
+loading entire (n_samples x n_genes) matrix into memory at once.
+"""
+
+from __future__ import annotations
+
+import time
+import warnings
+
+import numpy as np
+import pandas as pd
+from scipy import stats as sp_stats
+from sklearn.decomposition import PCA, IncrementalPCA
+from sklearn.mixture import GaussianMixture
+
+from ._core import to_numpy, gene_indices, rows_without_nan, nanmedian_cols, nanmean_rows
+from .utils import gene_intersection
+
+INCREMENTAL_THRESHOLD = 50_000
+
+
+def _fit_pca(sig_clean_T: np.ndarray, n_genes: int):
+    """Fit PCA, using IncrementalPCA for large sample counts.
+
+    sig_clean_T: (n_samples, n_genes) — already transposed and NaN-free.
+    Returns (pca1_scores, explained_variance_ratio, pca_obj).
+    """
+    n_samples = sig_clean_T.shape[0]
+
+    if n_samples > INCREMENTAL_THRESHOLD:
+        n_components = min(n_genes, 10)
+        ipca = IncrementalPCA(n_components=n_components)
+        chunk_size = max(n_components + 1, 10_000)
+        for start in range(0, n_samples, chunk_size):
+            end = min(start + chunk_size, n_samples)
+            if (end - start) > n_components:
+                ipca.partial_fit(sig_clean_T[start:end])
+        pca1_scores = ipca.transform(sig_clean_T)[:, 0]
+        return pca1_scores, ipca.explained_variance_ratio_, ipca
+    else:
+        pca_obj = PCA()
+        pca_obj.fit(sig_clean_T)
+        pca1_scores = pca_obj.transform(sig_clean_T)[:, 0]
+        return pca1_scores, pca_obj.explained_variance_ratio_, pca_obj
+
+
+def compute_metrics(
+    gene_sigs_list: dict[str, list[str]],
+    names_sigs: list[str],
+    mRNA_expr_matrix: dict[str, pd.DataFrame],
+    names_datasets: list[str],
+) -> dict:
+    """Compute scoring comparison metrics for each signature-dataset pair."""
+    _t0 = time.perf_counter()
+    radar_values: dict = {}
+    scores_all: dict = {}
+    pca_results: dict = {}
+    score_cor_mats: dict = {}
+    mixture_models: dict = {}
+
+    # Pre-convert datasets
+    ds_cache: dict = {}
+    for ds in names_datasets:
+        arr, row_names, col_names = to_numpy(mRNA_expr_matrix[ds])
+        # Replace non-finite with NaN
+        arr = np.where(np.isfinite(arr), arr, np.nan)
+        ds_cache[ds] = (arr, row_names, col_names)
+
+    for sig in names_sigs:
+        gene_sig = gene_sigs_list[sig]
+        radar_values[sig] = {}
+        scores_all[sig] = {}
+        pca_results[sig] = {}
+        mixture_models[sig] = {}
+
+        for ds in names_datasets:
+            arr, row_names, col_names = ds_cache[ds]
+            inter = gene_intersection(gene_sig, mRNA_expr_matrix[ds])
+            sig_idx = gene_indices(inter, row_names)
+
+            sig_arr = arr[sig_idx]  # (n_genes, n_samples)
+
+            # Vectorized median/mean scores per sample
+            with np.errstate(invalid="ignore"):
+                med_scores = np.nanmedian(sig_arr, axis=0)
+                mean_scores = np.nanmean(sig_arr, axis=0)
+
+            # PCA on clean (no-NaN) gene rows
+            pca1_scores = None
+            props_of_variances = None
+            pca_obj = None
+            try:
+                clean_mask = rows_without_nan(sig_arr)
+                sig_clean = sig_arr[clean_mask]  # (n_clean_genes, n_samples)
+                if sig_clean.shape[0] >= 2 and sig_clean.shape[1] >= 2:
+                    sig_clean_T = sig_clean.T  # (n_samples, n_genes)
+                    pca1_scores, props_of_variances, pca_obj = _fit_pca(
+                        sig_clean_T, sig_clean.shape[0]
+                    )
+            except Exception:
+                pca1_scores = None
+                pca_obj = None
+
+            pca_results[sig][ds] = {
+                "pca_obj": pca_obj,
+                "props_of_variances": props_of_variances,
+            }
+
+            # Spearman correlations
+            rho_mean_med = 0.0
+            rho_mean_pca1 = 0.0
+            rho_pca1_med = 0.0
+
+            if len(med_scores) > 1 and len(mean_scores) > 1:
+                rho_mean_med, _ = sp_stats.spearmanr(med_scores, mean_scores)
+
+            if pca1_scores is not None and len(pca1_scores) > 1:
+                rho_mean_pca1, _ = sp_stats.spearmanr(mean_scores, pca1_scores)
+                rho_pca1_med, _ = sp_stats.spearmanr(pca1_scores, med_scores)
+
+            prop_pca1_var = 0.0
+            if props_of_variances is not None and len(props_of_variances) > 0:
+                prop_pca1_var = float(props_of_variances[0])
+
+            radar_values[sig][ds] = {
+                "rho_mean_med": float(rho_mean_med),
+                "rho_pca1_med": float(rho_pca1_med),
+                "rho_mean_pca1": float(rho_mean_pca1),
+                "prop_pca1_var": prop_pca1_var,
+            }
+
+            # Mixture models
+            mm = {"median": None, "mean": None, "pca1": None}
+            for score_name, score_arr in [("median", med_scores), ("mean", mean_scores),
+                                           ("pca1", pca1_scores)]:
+                if score_arr is not None and len(score_arr) > 1:
+                    clean = score_arr[np.isfinite(score_arr)]
+                    if len(clean) >= 2:
+                        max_k = min(len(clean) // 2, 10)
+                        max_k = max(max_k, 1)
+                        best_bic = np.inf
+                        best_model = None
+                        for k in range(1, max_k + 1):
+                            try:
+                                gm = GaussianMixture(n_components=k, random_state=42)
+                                gm.fit(clean.reshape(-1, 1))
+                                bic = gm.bic(clean.reshape(-1, 1))
+                                if bic < best_bic:
+                                    best_bic = bic
+                                    best_model = gm
+                            except Exception:
+                                pass
+                        mm[score_name] = best_model
+            mixture_models[sig][ds] = mm
+
+            scores_all[sig][ds] = {
+                "med_scores": med_scores,
+                "mean_scores": mean_scores,
+                "pca1_scores": pca1_scores,
+                "common_score_cols": col_names,
+                "props_of_variances": props_of_variances,
+            }
+
+    return {
+        "radar_values": radar_values,
+        "scores": scores_all,
+        "pca_results": pca_results,
+        "score_cor_mats": score_cor_mats,
+        "mixture_models": mixture_models,
+        "elapsed_seconds": time.perf_counter() - _t0,
+    }
