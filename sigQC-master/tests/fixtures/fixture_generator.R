@@ -78,14 +78,23 @@ fixture <- list(
   names_datasets = names_datasets
 )
 
+# Determine output directory: use the script's own location when run via
+# Rscript, fall back to the current working directory otherwise.
+script_args <- commandArgs(trailingOnly = FALSE)
+file_flag   <- grep("^--file=", script_args, value = TRUE)
+if (length(file_flag) > 0) {
+  out_dir <- dirname(normalizePath(sub("^--file=", "", file_flag[1])))
+} else {
+  out_dir <- getwd()
+}
+
 # Save as RDS
-saveRDS(fixture, file = file.path(dirname(sys.frame(1)$ofile %||% "."), "fixture_small.rds"))
+saveRDS(fixture, file = file.path(out_dir, "fixture_small.rds"))
 
 # Save expression matrices as CSV (for Python consumption)
 for (ds_name in names_datasets) {
   write.csv(mRNA_expr_matrix[[ds_name]],
-            file = file.path(dirname(sys.frame(1)$ofile %||% "."),
-                             paste0("fixture_", ds_name, ".csv")))
+            file = file.path(out_dir, paste0("fixture_", ds_name, ".csv")))
 }
 
 # Save signatures as CSV
@@ -93,8 +102,7 @@ sig_df <- data.frame(
   signature = c(rep("compact_sig", 5), rep("diffuse_sig", 5)),
   gene = c(compact_sig[, 1], diffuse_sig[, 1])
 )
-write.csv(sig_df, file = file.path(dirname(sys.frame(1)$ofile %||% "."),
-                                    "fixture_signatures.csv"),
+write.csv(sig_df, file = file.path(out_dir, "fixture_signatures.csv"),
           row.names = FALSE)
 
 cat("Fixtures generated successfully.\n")

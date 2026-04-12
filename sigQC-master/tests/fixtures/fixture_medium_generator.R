@@ -177,10 +177,13 @@ fixture <- list(
   names_datasets = names_datasets
 )
 
-out_dir <- tryCatch(
-  dirname(sys.frame(1)$ofile),
-  error = function(e) "tests/fixtures"
-)
+script_args <- commandArgs(trailingOnly = FALSE)
+file_flag   <- grep("^--file=", script_args, value = TRUE)
+if (length(file_flag) > 0) {
+  out_dir <- dirname(normalizePath(sub("^--file=", "", file_flag[1])))
+} else {
+  out_dir <- getwd()
+}
 
 # Save RDS
 saveRDS(fixture, file = file.path(out_dir, "fixture_medium.rds"))
