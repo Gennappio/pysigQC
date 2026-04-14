@@ -139,10 +139,11 @@ plot_compactness <- function(compute_result, gene_sigs_list, names_sigs, mRNA_ex
   legend_names <- c()
   legend_cols <- c()
   legend_lty <- c()
+  ds_colors <- dataset_colors(length(names_datasets))
   for (k in seq_along(names_sigs)) {
     for (i in seq_along(names_datasets)) {
       legend_names <- c(legend_names, paste0(names_datasets[i], ' ', names_sigs[k]))
-      legend_cols <- c(legend_cols, i)
+      legend_cols <- c(legend_cols, ds_colors[i])
       legend_lty <- c(legend_lty, k)
     }
   }
@@ -183,12 +184,12 @@ plot_compactness <- function(compute_result, gene_sigs_list, names_sigs, mRNA_ex
         if (plots_count == 0) {
           graphics::plot(stats::density(unlist(stats::na.omit(autocors))),
                          ylim = c(0, ceiling(max_dens)), xlim = c(-1, 1),
-                         col = i, main = NA, lwd = 2, lty = k)
+                         col = ds_colors[i], main = NA, lwd = 2, lty = k)
           plots_count <- 1
         } else {
           graphics::lines(stats::density(unlist(stats::na.omit(autocors))),
                           ylim = c(0, ceiling(max_dens)), xlim = c(-1, 1),
-                          col = i, main = NA, lwd = 2, lty = k)
+                          col = ds_colors[i], main = NA, lwd = 2, lty = k)
         }
       }
     }
