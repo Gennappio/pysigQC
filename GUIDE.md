@@ -17,7 +17,9 @@ Comprehensive documentation for the sigQC audit, refactoring, testing, and Pytho
 9. [SLURM Cluster Execution](#slurm-cluster-execution)
 10. [Analyzing Discrepancies](#analyzing-discrepancies)
 11. [Python Package Usage](#python-package-usage)
-12. [Key R/Python Behavioral Differences](#key-rpython-behavioral-differences)
+12. [Command-Line Interface](#command-line-interface)
+13. [Plotting Module](#plotting-module)
+14. [Key R/Python Behavioral Differences](#key-rpython-behavioral-differences)
 
 ---
 
@@ -42,6 +44,7 @@ pysigQC/
 ├── GUIDE.md                   # This file
 ├── pyproject.toml             # Python package configuration
 │
+├── main.py                    # Command-line interface (CLI)
 ├── pysigqc/                   # Python port (corrected + optimized)
 │   ├── __init__.py
 │   ├── utils.py               # Shared helpers (gene_intersection, z_transform)
@@ -52,7 +55,19 @@ pysigQC/
 │   ├── compare_metrics.py     # Scoring comparison metrics (4 radar values)
 │   ├── eval_struct.py         # Structure analysis (clustering, biclustering)
 │   ├── radar_chart.py         # Radar chart assembly (14 metrics)
-│   └── negative_control.py    # Negative/permutation controls (optimized)
+│   ├── negative_control.py    # Negative/permutation controls (optimized)
+│   └── plots/                 # Plotting module (decoupled from compute)
+│       ├── __init__.py        # plot_all() orchestrator
+│       ├── _colors.py         # Color palettes
+│       ├── _style.py          # Matplotlib style helpers
+│       ├── plot_var.py        # Variability plots (mean vs SD, CV, skewness)
+│       ├── plot_expr.py       # Expression plots (density, NA bar charts)
+│       ├── plot_compactness.py # Autocorrelation heatmaps
+│       ├── plot_stan.py       # Standardization comparison plots
+│       ├── plot_struct.py     # Clustering heatmaps, biclustering
+│       ├── plot_metrics.py    # Score comparison, QQ plots, mixture models
+│       ├── plot_radar.py      # Radar chart visualization
+│       └── plot_negative_control.py  # Negative control plots
 │
 ├── tests/                     # Python tests
 │   ├── conftest.py            # Shared pytest fixtures
@@ -415,6 +430,175 @@ result = run_negative_control(
 - **Expression matrices:** pandas DataFrames with genes as rows (index) and samples as columns. Should be normalized, batch-corrected, and log-transformed.
 - **Signatures:** dict mapping signature names to lists of gene names (must match expression matrix row index).
 - **Minimum:** 2 genes per signature, 2 samples per dataset.
+
+---
+
+## Command-Line Interface
+
+The `main.py` script provides a full CLI for running pysigQC on new datasets without writing Python code.
+
+### Installation
+
+```bash
+# Install the package (adds `pysigqc` command)
+pip install -e ".[all]"
+
+# Or run directly
+python main.py --help
+```
+
+### Basic Usage
+
+```bash
+# Single dataset
+python main.py --datasets expression.csv --signatures sigs.csv --out-dir results/
+
+# Multiple datasets with glob pattern
+python main.py --datasets "data/dataset_*.csv" --signatures sigs.csv --out-dir results/
+
+# Compute only (no plots)
+python main.py --datasets data.csv --signatures sigs.csv --out-dir results/ --no-plots
+
+# Verbose output with custom parallelism
+python main.py -d data.csv -s sigs.csv -o results/ -v --n-jobs 4
+```
+
+### Supported Input Formats
+
+| Format | Extension | Flag |
+|--------|-----------|------|
+| CSV (comma-separated) | `.csv` | `--format csv` (default) |
+| TSV (tab-separated) | `.tsv` | `--format tsv` |
+| Parquet | `.parquet` | `--format parquet` |
+| HDF5 | `.h5` | `--format hdf` |
+
+Format is auto-detected from file extension, or specify explicitly with `--format`.
+
+### Signature File Formats
+
+| Format | Structure | Flag |
+|--------|-----------|------|
+| CSV (long) | Columns: `signature`, `gene` | `--sig-format csv` (default) |
+| JSON | Dict: `{"sig_name": ["gene1", "gene2", ...]}` | `--sig-format json` |
+| GMT | MSigDB format: `name<tab>desc<tab>gene1<tab>gene2...` | `--sig-format gmt` |
+
+### All CLI Options
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--datasets` | `-d` | Path(s) or glob patterns to expression matrices (required) |
+| `--signatures` | `-s` | Path to gene signatures file (required) |
+| `--out-dir` | `-o` | Output directory (default: `sigqc_output`) |
+| `--format` | `-f` | Input format: `auto`, `csv`, `tsv`, `parquet`, `hdf` |
+| `--sig-format` | | Signature format: `auto`, `csv`, `json`, `gmt` |
+| `--no-plots` | | Skip plot generation (compute metrics only) |
+| `--n-jobs` | `-j` | Parallel jobs (-1 = all cores) |
+| `--save-results` | | Save intermediate results as CSV (default: True) |
+| `--verbose` | `-v` | Enable verbose output |
+| `--quiet` | `-q` | Suppress non-error output |
+
+### Output Files
+
+The CLI generates:
+
+- `radar_output_table.csv` — Main summary table with 14 QC metrics per signature/dataset
+- `sig_*.pdf` — Individual plot files (if `--no-plots` not specified)
+
+---
+
+## Plotting Module
+
+The plotting layer is fully decoupled from computation, located in `pysigqc/plots/`.
+
+### Architecture
+
+```
+pysigqc/plots/
+├── __init__.py           # plot_all() — orchestrates all plots
+├── plot_var.py           # Mean vs SD, CV distributions, skewness
+├── plot_expr.py          # Expression density, NA bar charts
+├── plot_compactness.py   # Autocorrelation heatmaps
+├── plot_stan.py          # Raw vs z-transformed correlation
+├── plot_struct.py        # Hierarchical clustering, biclustering
+├── plot_metrics.py       # Score comparison, QQ plots, GMM
+├── plot_radar.py         # Radar chart
+└── plot_negative_control.py  # Null distribution plots
+```
+
+### Usage with Pipeline
+
+```python
+from pysigqc_joblib.pipeline import run_pipeline
+from pysigqc.plots import plot_all
+
+# Run computation
+result = run_pipeline(signatures, names_sigs, datasets, names_datasets)
+
+# Generate all plots
+plot_paths = plot_all(result, out_dir="plots/")
+# Returns: {"var": [Path], "expr": [Path], "radar": [Path], ...}
+```
+
+### Usage with Pre-computed Results
+
+```python
+from pysigqc.plots import plot_all
+
+# Load previously saved results
+import json
+with open("results.json") as f:
+    result = json.load(f)
+
+# Generate plots from saved data
+plot_paths = plot_all(result, out_dir="plots/")
+```
+
+### Individual Plot Functions
+
+Each module exports a `plot_*()` function:
+
+```python
+from pysigqc.plots.plot_var import plot_var
+from pysigqc.plots.plot_radar import plot_radar
+
+# Generate just variability plots
+var_paths = plot_var(
+    result["var_result"],
+    names_sigs=names_sigs,
+    names_datasets=names_datasets,
+    out_dir="plots/"
+)
+
+# Generate just radar chart
+radar_path = plot_radar(
+    result["radar_result"],
+    names_sigs=names_sigs,
+    names_datasets=names_datasets,
+    out_dir="plots/"
+)
+```
+
+### Generated Plot Files
+
+| Module | Output Files |
+|--------|-------------|
+| `plot_var` | `sig_mean_vs_sd.pdf` |
+| `plot_expr` | `sig_expr_density_plots.pdf`, `sig_expr_barcharts.pdf`, `sig_expr_barcharts_NA_values.pdf` |
+| `plot_compactness` | `sig_autocor_hmps.pdf`, `sig_autocor_dens.pdf` |
+| `plot_stan` | `sig_standardisation_comp.pdf` |
+| `plot_metrics` | `sig_compare_metrics_<sig>.pdf`, `sig_qq_plots_<sig>.pdf`, `sig_gaussian_mixture_model_<sig>.pdf` |
+| `plot_radar` | `sig_radarplot.pdf` |
+| `plot_negative_control` | `sig_negative_control_<sig>.pdf` |
+
+### Dependencies
+
+Plotting requires optional dependencies:
+
+```bash
+pip install pysigqc[plot]
+# or
+pip install matplotlib seaborn
+```
 
 ---
 
