@@ -19,14 +19,14 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from .eval_var import plot_var
-from .eval_expr import plot_expr
-from .eval_stan import plot_stan
-from .eval_compactness import plot_compactness
-from .eval_struct import plot_struct
-from .compare_metrics import plot_metrics
-from .radar import plot_radar
-from .negative_control import plot_negative_control
+from .plot_var import plot_var
+from .plot_expr import plot_expr
+from .plot_stan import plot_stan
+from .plot_compactness import plot_compactness
+from .plot_struct import plot_struct
+from .plot_metrics import plot_metrics
+from .plot_radar import plot_radar
+from .plot_negative_control import plot_negative_control
 
 logger = logging.getLogger(__name__)
 
