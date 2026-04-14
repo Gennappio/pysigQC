@@ -107,7 +107,7 @@ plot_radar <- function(compute_result, names_sigs, names_datasets,
   areas <- compute_result$areas
   legend_labels <- compute_result$legend_labels
 
-  colours_array <- grDevices::rainbow(length(names_datasets))
+  colours_array <- dataset_colors(length(names_datasets))
   legend_cols <- c()
   legend_lty <- c()
   for (k in seq_along(names_sigs)) {

@@ -89,7 +89,7 @@
       stripchartPch = rep(2, stripchartNum)
     #1.2) Check the stripchartCol, if missing create a color palette
     if(is.null(stripchartCol) || length(stripchartCol)!=stripchartNum || !.areAllColours(stripchartCol))
-      stripchartCol = grDevices::rainbow(n = stripchartNum)
+      stripchartCol = dataset_colors(stripchartNum)
     #2) Loop over list
     for(i in 1:stripchartNum){
       stripchartMatrix = stripchartMatrixList[[i]]

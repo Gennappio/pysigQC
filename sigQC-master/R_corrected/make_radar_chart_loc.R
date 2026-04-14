@@ -39,7 +39,7 @@
 
 make_radar_chart_loc <- function(radar_plot_values,showResults = FALSE,names_sigs,names_datasets, out_dir = '~',file){
   radar_plot_mat <- c()
-  colours_array <- grDevices::rainbow(length(names_datasets))
+  colours_array <- dataset_colors(length(names_datasets))
   # first we need to flatten this list into a matrix that we can use with the radar plot plotting function
   # grDevices::dev.new()
 
