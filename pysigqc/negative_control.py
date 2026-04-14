@@ -1,8 +1,8 @@
 """Negative and permutation controls for gene signature QC metrics.
 
-Port of R_refactored/sigsQcNegativeControl.R + R_optimized/ version.
-Fully optimized: vectorized random signature generation, in-place permutation,
-optional joblib parallelism, no disk I/O roundtrip.
+Port of R_refactored/sigsQcNegativeControl.R.
+Sequential reference implementation — no parallelism.
+For a parallel version using joblib see pysigqc_joblib/negative_control.py.
 """
 
 from __future__ import annotations
@@ -96,7 +96,6 @@ def run_negative_control(
     gene_sigs_list: dict[str, list[str]],
     expression_matrix_list: dict[str, pd.DataFrame],
     num_resampling: int = 50,
-    n_jobs: int = 1,
     seed: int = 42,
 ) -> dict:
     """Run negative and permutation controls.
@@ -105,7 +104,6 @@ def run_negative_control(
         gene_sigs_list: dict of signature name -> gene list
         expression_matrix_list: dict of dataset name -> DataFrame
         num_resampling: number of random resamples
-        n_jobs: number of parallel jobs (1 = sequential)
         seed: random seed for reproducibility
 
     Returns dict with:
