@@ -66,8 +66,8 @@ def plot_radar(
     angles += angles[:1]
 
     fig, ax = plt.subplots(figsize=(10, 10), subplot_kw=dict(polar=True))
-    ax.set_theta_offset(np.pi / 2)
-    ax.set_theta_direction(-1)
+    ax.set_theta_offset(np.pi / 2)  # Start at top (12 o'clock)
+    ax.set_theta_direction(1)  # COUNTER-CLOCKWISE to match R's fmsb::radarchart
 
     # Grid: R cglcol='grey', cglty=1 (solid), cglwd=1
     ax.set_ylim(0, 1)
@@ -100,7 +100,8 @@ def plot_radar(
 
             ls = sig_linestyle(ki)
             line, = ax.plot(angles, vals_closed, color=ds_colors[di],
-                            linestyle=ls, lw=2, alpha=0.9)
+                            linestyle=ls, lw=2, alpha=0.9,
+                            marker='o', markersize=5)  # Add dots like R's pty=16
             ax.fill(angles, vals_closed, color=ds_colors[di], alpha=0.05)
 
             label = legend_labels[row_idx] if row_idx < len(legend_labels) else f"{ds} {sig}"
