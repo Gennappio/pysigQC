@@ -54,8 +54,10 @@ make_all_plots <- function(gene_sigs_list, mRNA_expr_matrix,names_sigs=NULL,name
   #  11. sigsQcNegativeControl() → (optional) Negative + permutation controls
   #
   # Each step is wrapped in tryCatch to log errors without halting the pipeline.
-  # ISSUE: This means failures in early steps (e.g., eval_var_loc) are silently logged
-  # and subsequent steps may produce incomplete or misleading results.
+  # BUG-6 FIX: The original tryCatch pattern discarded radar_plot_values on error:
+  #   tryCatch(radar_plot_values <- func(...), error=function(err){...})
+  # This caused make_radar_chart_loc to fill missing metrics with zeros.
+  # Fixed to use explicit result capture: result <- tryCatch(...); if (!is.null(result)) ...
 
   #### print version number
   print("-----sigQC Version 0.1.24-----")
@@ -250,31 +252,52 @@ make_all_plots <- function(gene_sigs_list, mRNA_expr_matrix,names_sigs=NULL,name
       }
 
 
-      tryCatch(radar_plot_values <- eval_var_loc(gene_sigs_list,names_sigs, mRNA_expr_matrix,names_datasets,out_dir,file=log.con,showResults,radar_plot_values),
+      # BUG-6 FIX: Use explicit result capture to preserve radar_plot_values on error.
+      # The old pattern `tryCatch(radar_plot_values <- func(...), error=...)` would
+      # silently discard the returned radar_plot_values if func() threw an error,
+      # causing make_radar_chart_loc to fill missing metrics with zeros.
+
+      result <- tryCatch(eval_var_loc(gene_sigs_list,names_sigs, mRNA_expr_matrix,names_datasets,out_dir,file=log.con,showResults,radar_plot_values),
                error=function(err){
                  cat(paste0("Error occurred in eval_var_loc: ",err), file=log.con, sep="\n")
+                 NULL
                })
-      tryCatch(radar_plot_values <- eval_expr_loc(gene_sigs_list,names_sigs,mRNA_expr_matrix,names_datasets,thresholds, out_dir,file=log.con,showResults,radar_plot_values ),
+      if (!is.null(result)) radar_plot_values <- result
+
+      result <- tryCatch(eval_expr_loc(gene_sigs_list,names_sigs,mRNA_expr_matrix,names_datasets,thresholds, out_dir,file=log.con,showResults,radar_plot_values ),
                error=function(err){
                  cat(paste0("Error occurred in eval_expr_loc: ",err), file=log.con, sep="\n")
+                 NULL
                })
-      tryCatch(radar_plot_values <- eval_compactness_loc(gene_sigs_list,names_sigs,mRNA_expr_matrix,names_datasets,out_dir,file=log.con,showResults,radar_plot_values,logged=T,origin ),
+      if (!is.null(result)) radar_plot_values <- result
+
+      result <- tryCatch(eval_compactness_loc(gene_sigs_list,names_sigs,mRNA_expr_matrix,names_datasets,out_dir,file=log.con,showResults,radar_plot_values,logged=T,origin ),
                error=function(err){
                  cat(paste0("Error occurred during the evaluation of compactness: ",err), file=log.con, sep="\n")
+                 NULL
                })
-      tryCatch({radar_plot_values <- compare_metrics_loc(gene_sigs_list,names_sigs,mRNA_expr_matrix,names_datasets,out_dir,file=log.con,showResults,radar_plot_values )},
+      if (!is.null(result)) radar_plot_values <- result
+
+      result <- tryCatch(compare_metrics_loc(gene_sigs_list,names_sigs,mRNA_expr_matrix,names_datasets,out_dir,file=log.con,showResults,radar_plot_values ),
                error=function(err){
-              #  print(paste0("Error, likely due to inability to calculate PCA, because of missing values: ", err))
                  cat(paste0("Error occurred, likely due to inability to calculate PCA, because of missing values:  ",err), file=log.con, sep="\n")
+                 NULL
                })
-      tryCatch({radar_plot_values <- eval_stan_loc(gene_sigs_list,names_sigs,mRNA_expr_matrix,names_datasets,out_dir,file=log.con,showResults,radar_plot_values )},
+      if (!is.null(result)) radar_plot_values <- result
+
+      result <- tryCatch(eval_stan_loc(gene_sigs_list,names_sigs,mRNA_expr_matrix,names_datasets,out_dir,file=log.con,showResults,radar_plot_values ),
             error=function(err){
              cat(paste0("Error occurred in eval_stan_loc: ",err), file=log.con, sep="\n")
+             NULL
            })
-      tryCatch(radar_plot_values <- eval_struct_loc(gene_sigs_list,names_sigs,mRNA_expr_matrix,names_datasets,covariates,out_dir,file=log.con,showResults,radar_plot_values ),
+      if (!is.null(result)) radar_plot_values <- result
+
+      result <- tryCatch(eval_struct_loc(gene_sigs_list,names_sigs,mRNA_expr_matrix,names_datasets,covariates,out_dir,file=log.con,showResults,radar_plot_values ),
                error=function(err){
                  cat(paste0("Error occurred in eval_struct_loc: ",err), file=log.con, sep="\n")
+                 NULL
                })
+      if (!is.null(result)) radar_plot_values <- result
       # print(radar_plot_values)
       tryCatch(make_radar_chart_loc(radar_plot_values,showResults,names_sigs, names_datasets,out_dir,file=log.con),
                error=function(err){

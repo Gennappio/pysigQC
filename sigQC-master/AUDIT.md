@@ -101,6 +101,27 @@ Python porting project. All issues are annotated in the source files with `# BUG
 - `R/eval_struct_loc.R` repeats the z-transform → binarize → BCCC biclustering pipeline 4 times.
 - `R/compare_metrics_loc.R` recomputes mean/median/PCA1 scores in every section.
 
+### BUG-6: `tryCatch` blocks silently discard radar_plot_values on error [CRITICAL]
+- **File:** `R/make_all_plots.R`, lines 253-277
+- **Pattern:**
+  ```r
+  tryCatch(radar_plot_values <- eval_compactness_loc(...),
+           error=function(err){
+             cat(paste0("Error occurred...: ",err), file=log.con)
+           })
+  ```
+- **Problem:** When any `eval_*_loc` function throws an error:
+  1. The error handler logs the message
+  2. But the assignment `radar_plot_values <- ...` **never executes**
+  3. The old `radar_plot_values` (without new metrics) is kept
+  4. Later, `make_radar_chart_loc` fills missing metrics with **0** (lines 54-63)
+- **Result:** Radar chart shows zeros for `autocor_median`, `rho_mean_med`, `rho_pca1_med`, `rho_mean_pca1`, `prop_pca1_var` if `eval_compactness_loc` or `compare_metrics_loc` fail
+- **Fix:** Use explicit result capture and conditional assignment:
+  ```r
+  result <- tryCatch(eval_compactness_loc(...), error=function(err){...})
+  if (!is.null(result)) radar_plot_values <- result
+  ```
+
 ### Broad `tryCatch` blocks mask errors
 - `R/make_all_plots.R` wraps each pipeline step in `tryCatch` that logs but doesn't halt, so failures in early steps (e.g., eval_var_loc) are silently logged and subsequent steps may produce incomplete results.
 
