@@ -36,7 +36,14 @@ def compute_radar(
     for sig in names_sigs:
         for ds in names_datasets:
             vals = radar_plot_values.get(sig, {}).get(ds, {})
-            row = [abs(vals.get(m, 0.0)) for m in ALL_METRICS]
+            # R fills missing/NA values with 0 (line 59-60 in make_radar_chart_loc.R)
+            row = []
+            for m in ALL_METRICS:
+                v = vals.get(m, 0.0)
+                # Convert NaN/None to 0 to match R behavior
+                if v is None or (isinstance(v, float) and np.isnan(v)):
+                    v = 0.0
+                row.append(abs(v))
             rows.append(row)
             row_names.append(f"{ds.replace(' ', '.')}_{sig.replace(' ', '.')}")
 

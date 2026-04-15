@@ -33,43 +33,82 @@ _JET_CMAP = LinearSegmentedColormap.from_list("r_jet", _JET_COLORS, N=256)
 
 
 def _smoothscatter(ax, x, y, xlabel, ylabel, title, font):
-    """R-style smoothScatter with red density overlay on right axis."""
+    """R-style smoothScatter: 2D density heatmap + black points + red density line.
+
+    Matches R's graphics::smoothScatter() which:
+    1. Creates a filled 2D kernel density image (blue-cyan-yellow-red)
+    2. Overlays individual points as small black dots
+    3. Overlays 1D density of x-axis as red line on secondary y-axis
+    """
     mask = np.isfinite(x) & np.isfinite(y)
     x, y = x[mask], y[mask]
 
     if len(x) < 3:
         ax.text(0.5, 0.5, "Insufficient data", transform=ax.transAxes,
-                ha="center", va="center", fontsize=7, color="grey")
-        ax.set_title(title, fontsize=font)
+                ha="center", va="center", fontsize=9, color="grey")
+        ax.set_title(title, fontsize=max(font, 10))
         return
 
-    # 2D KDE scatter
+    # Compute axis limits with small padding
+    x_min, x_max = x.min(), x.max()
+    y_min, y_max = y.min(), y.max()
+    x_pad = (x_max - x_min) * 0.05 or 0.1
+    y_pad = (y_max - y_min) * 0.05 or 0.1
+
+    # Create 2D density heatmap (filled image like R's smoothScatter)
     try:
+        # Create a grid for the 2D KDE
+        n_grid = 100
+        xx = np.linspace(x_min - x_pad, x_max + x_pad, n_grid)
+        yy = np.linspace(y_min - y_pad, y_max + y_pad, n_grid)
+        XX, YY = np.meshgrid(xx, yy)
+        positions = np.vstack([XX.ravel(), YY.ravel()])
+
+        # Compute 2D KDE
         xy = np.vstack([x, y])
         kde = gaussian_kde(xy)
-        density = kde(xy)
-        idx = density.argsort()
-        ax.scatter(x[idx], y[idx], c=density[idx], s=4, cmap=_JET_CMAP,
-                   edgecolors="none", rasterized=True)
+        Z = kde(positions).reshape(XX.shape)
+
+        # Plot as filled contour/image (matching R's blue-to-yellow-to-red)
+        ax.imshow(Z, origin='lower', aspect='auto',
+                  extent=[x_min - x_pad, x_max + x_pad, y_min - y_pad, y_max + y_pad],
+                  cmap=_JET_CMAP, interpolation='bilinear')
+
+        # Overlay individual points as small black dots (R uses pch='.')
+        ax.scatter(x, y, c='black', s=3, marker='.', edgecolors='none', alpha=0.8)
+
     except np.linalg.LinAlgError:
+        # Fallback: just scatter plot with density coloring
         ax.scatter(x, y, s=4, c="blue", edgecolors="none", rasterized=True)
 
-    # Red density overlay on right axis
+    # Red density overlay on right axis (1D density of x)
+    # Use smaller bandwidth to match R's density() which shows more detail/ripples
     try:
         kde_1d = gaussian_kde(x)
-        xs = np.linspace(x.min(), x.max(), 200)
+        # Reduce bandwidth by 50% to show more ripples like R's density()
+        kde_1d.set_bandwidth(kde_1d.factor * 0.5)
+        xs = np.linspace(x_min, x_max, 300)
         dens = kde_1d(xs)
         ax2 = ax.twinx()
-        ax2.plot(xs, dens, color="red", lw=2, alpha=0.8)
-        ax2.set_ylabel("Density", fontsize=6, color="red")
-        ax2.tick_params(axis="y", labelsize=4, colors="red")
+        ax2.plot(xs, dens, color="red", lw=2, alpha=0.9)
+        ax2.set_ylabel("Density", fontsize=8, color="red")
+        ax2.tick_params(axis="y", labelsize=6, colors="red")
+        ax2.set_ylim(0, dens.max() * 1.1)
     except np.linalg.LinAlgError:
         pass
 
+    # Compute and display Spearman correlation
     rho, _ = spearmanr(x, y)
-    ax.set_title(f"{title}\nrho = {rho:.3f}", fontsize=font)
-    ax.set_xlabel(xlabel, fontsize=7)
-    ax.set_ylabel(ylabel, fontsize=7)
+
+    # Title with rho annotation (R puts rho in top-right corner)
+    ax.set_title(title, fontsize=max(font, 10), fontweight='bold')
+    ax.annotate(f"rho = {rho:.1f}", xy=(0.95, 0.95), xycoords='axes fraction',
+                ha='right', va='top', fontsize=8,
+                bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7))
+
+    ax.set_xlabel(xlabel, fontsize=9)
+    ax.set_ylabel(ylabel, fontsize=9)
+    ax.tick_params(labelsize=7)
 
 
 def plot_metrics(
@@ -84,7 +123,8 @@ def plot_metrics(
 
     n_ds = len(names_datasets)
     max_label = max(len(f"{ds} {sig}") for sig in names_sigs for ds in names_datasets)
-    font = min(9.0, 4 * 10 / max_label)
+    # Increase base font size - R uses larger titles
+    font = max(9.0, min(11.0, 6 * 10 / max_label))
 
     paths: list[Path] = []
 
