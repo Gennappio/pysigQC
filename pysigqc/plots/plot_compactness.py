@@ -7,6 +7,8 @@ Produces:
 - ``sig_autocor_dens.pdf`` — overlaid density curves of pairwise correlations,
   one line per (sig, dataset). Color=dataset, linestyle=signature.
   Legend positioned outside right (matching R's par(omi=...)).
+- ``sig_autocor_rankProd_{sig}.pdf`` — RankProd plots showing genes with
+  consistently high/low autocorrelation across datasets (matching R's plotRP).
 
 Matches R's eval_compactness_loc.R styling.
 """
@@ -29,6 +31,98 @@ from ._style import save_pdf, dynamic_fontsize
 
 # R's gplots::colorpanel(100,"blue","white","red")
 _HEATMAP_CMAP = "RdBu_r"
+
+
+def _plot_rank_product(
+    rp_table,
+    sig_name: str,
+    out_dir: Path,
+) -> Path | None:
+    """Generate RankProd plot matching R's RankProd::plotRP().
+
+    Creates a 1x2 subplot:
+      - Left: pfp_up vs gene rank (genes with consistently HIGH autocorrelation)
+      - Right: pfp_down vs gene rank (genes with consistently LOW autocorrelation)
+
+    Args:
+        rp_table: DataFrame with columns pfp_up, pfp_down, rp_up, rp_down
+        sig_name: signature name for title and filename
+        out_dir: output directory
+
+    Returns:
+        Path to generated PDF, or None if no data
+    """
+    import pandas as pd
+
+    if rp_table is None or (isinstance(rp_table, pd.DataFrame) and rp_table.empty):
+        return None
+
+    fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+
+    n_genes = len(rp_table)
+
+    # --- Left plot: Up-regulated (high autocorrelation) ---
+    ax = axes[0]
+    sorted_up = rp_table.sort_values("rp_up")
+    ranks = np.arange(1, n_genes + 1)
+    pfp_up = sorted_up["pfp_up"].values
+
+    # Plot points
+    ax.scatter(pfp_up, ranks, c="blue", s=20, alpha=0.7, edgecolors="none")
+
+    # Add gene labels for top genes (pfp < 0.05)
+    sig_genes_up = sorted_up[sorted_up["pfp_up"] < 0.05]
+    for gene in sig_genes_up.index:
+        rank_pos = np.where(sorted_up.index == gene)[0][0] + 1
+        pfp_val = sig_genes_up.loc[gene, "pfp_up"]
+        ax.annotate(
+            str(gene), (pfp_val, rank_pos),
+            fontsize=6, ha="left", va="center",
+            xytext=(3, 0), textcoords="offset points"
+        )
+
+    # Add vertical line at pfp=0.05
+    ax.axvline(x=0.05, color="red", linestyle="--", linewidth=1, alpha=0.7)
+
+    ax.set_xlabel("Estimated PFP", fontsize=10)
+    ax.set_ylabel("Number of identified genes", fontsize=10)
+    ax.set_title(f"Class 1: High autocorrelation\n{sig_name}", fontsize=10)
+    ax.set_xlim(-0.02, 1.02)
+    ax.set_ylim(0, n_genes + 1)
+
+    # --- Right plot: Down-regulated (low autocorrelation) ---
+    ax = axes[1]
+    sorted_down = rp_table.sort_values("rp_down")
+    pfp_down = sorted_down["pfp_down"].values
+
+    ax.scatter(pfp_down, ranks, c="blue", s=20, alpha=0.7, edgecolors="none")
+
+    # Add gene labels for top genes (pfp < 0.05)
+    sig_genes_down = sorted_down[sorted_down["pfp_down"] < 0.05]
+    for gene in sig_genes_down.index:
+        rank_pos = np.where(sorted_down.index == gene)[0][0] + 1
+        pfp_val = sig_genes_down.loc[gene, "pfp_down"]
+        ax.annotate(
+            str(gene), (pfp_val, rank_pos),
+            fontsize=6, ha="left", va="center",
+            xytext=(3, 0), textcoords="offset points"
+        )
+
+    ax.axvline(x=0.05, color="red", linestyle="--", linewidth=1, alpha=0.7)
+
+    ax.set_xlabel("Estimated PFP", fontsize=10)
+    ax.set_ylabel("Number of identified genes", fontsize=10)
+    ax.set_title(f"Class 2: Low autocorrelation\n{sig_name}", fontsize=10)
+    ax.set_xlim(-0.02, 1.02)
+    ax.set_ylim(0, n_genes + 1)
+
+    plt.tight_layout()
+
+    fname = out_dir / f"sig_autocor_rankProd_{sig_name}.pdf"
+    fig.savefig(fname, format="pdf", bbox_inches="tight")
+    plt.close(fig)
+
+    return fname
 
 
 def plot_compactness(
@@ -146,5 +240,15 @@ def plot_compactness(
 
     fig.tight_layout()
     paths.append(save_pdf(fig, out_dir, "sig_autocor_dens.pdf"))
+
+    # --- 3. RankProd plots (only if >1 dataset and tables exist) ---
+    rank_product_tables = compact_result.get("rank_product_tables", {})
+    if n_ds > 1 and rank_product_tables:
+        for sig in names_sigs:
+            rp_table = rank_product_tables.get(sig)
+            if rp_table is not None:
+                rp_path = _plot_rank_product(rp_table, sig, out_dir)
+                if rp_path:
+                    paths.append(rp_path)
 
     return paths

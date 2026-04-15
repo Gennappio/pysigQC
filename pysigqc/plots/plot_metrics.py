@@ -7,8 +7,10 @@ mfcol=c(4, n_datasets):
   Row 3: PCA1 vs Median
   Row 4: PCA scree barplot
 
-Also produces per-signature QQ plots: ``sig_qq_plots_<sig>.pdf``
-with layout mfcol=c(3, n_datasets).
+Also produces:
+- ``sig_qq_plots_<sig>.pdf``: QQ plots with layout mfcol=c(3, n_datasets)
+- ``sig_compare_ES_metrics_<sig>.pdf``: Enrichment score comparisons
+  (GSVA vs ssGSEA, ssGSEA vs PLAGE, PLAGE vs GSVA)
 """
 
 from __future__ import annotations
@@ -216,6 +218,84 @@ def plot_metrics(
                 fig.suptitle(f"Gaussian Mixture Model BIC\n{sig}", fontsize=11, y=1.02)
                 fig.tight_layout()
                 paths.append(save_pdf(fig, out_dir, f"sig_gaussian_mixture_model_{sig}.pdf"))
+            else:
+                plt.close(fig)
+
+    # --- Enrichment Score Comparison plots: sig_compare_ES_metrics_<sig>.pdf ---
+    # Layout: 3 rows (GSVA vs ssGSEA, ssGSEA vs PLAGE, PLAGE vs GSVA) x n_datasets
+    enrichment_scores = metrics_result.get("enrichment_scores", {})
+    if enrichment_scores:
+        for sig in names_sigs:
+            fig, axes = plt.subplots(3, n_ds, figsize=(3 * n_ds, 7.5), squeeze=False)
+            has_data = False
+
+            for di, ds in enumerate(names_datasets):
+                es = enrichment_scores.get(sig, {}).get(ds, {})
+                gsva = es.get("gsva")
+                ssgsea = es.get("ssgsea")
+                plage = es.get("plage")
+
+                # Row 0: GSVA vs ssGSEA
+                ax = axes[0, di]
+                if gsva is not None and ssgsea is not None:
+                    gsva_arr = np.asarray(gsva, dtype=float)
+                    ssgsea_arr = np.asarray(ssgsea, dtype=float)
+                    mask = np.isfinite(gsva_arr) & np.isfinite(ssgsea_arr)
+                    if mask.sum() > 2:
+                        _smoothscatter(ax, gsva_arr[mask], ssgsea_arr[mask],
+                                      "GSVA", "ssGSEA", f"GSVA vs ssGSEA\n{ds}", font)
+                        has_data = True
+                    else:
+                        ax.text(0.5, 0.5, "Insufficient data", transform=ax.transAxes,
+                                ha="center", va="center", fontsize=7, color="grey")
+                        ax.set_title(f"GSVA vs ssGSEA\n{ds}", fontsize=font)
+                else:
+                    ax.text(0.5, 0.5, "N/A", transform=ax.transAxes,
+                            ha="center", va="center", fontsize=7, color="grey")
+                    ax.set_title(f"GSVA vs ssGSEA\n{ds}", fontsize=font)
+
+                # Row 1: ssGSEA vs PLAGE
+                ax = axes[1, di]
+                if ssgsea is not None and plage is not None:
+                    ssgsea_arr = np.asarray(ssgsea, dtype=float)
+                    plage_arr = np.asarray(plage, dtype=float)
+                    mask = np.isfinite(ssgsea_arr) & np.isfinite(plage_arr)
+                    if mask.sum() > 2:
+                        _smoothscatter(ax, ssgsea_arr[mask], plage_arr[mask],
+                                      "ssGSEA", "PLAGE", f"ssGSEA vs PLAGE\n{ds}", font)
+                        has_data = True
+                    else:
+                        ax.text(0.5, 0.5, "Insufficient data", transform=ax.transAxes,
+                                ha="center", va="center", fontsize=7, color="grey")
+                        ax.set_title(f"ssGSEA vs PLAGE\n{ds}", fontsize=font)
+                else:
+                    ax.text(0.5, 0.5, "N/A", transform=ax.transAxes,
+                            ha="center", va="center", fontsize=7, color="grey")
+                    ax.set_title(f"ssGSEA vs PLAGE\n{ds}", fontsize=font)
+
+                # Row 2: PLAGE vs GSVA
+                ax = axes[2, di]
+                if plage is not None and gsva is not None:
+                    plage_arr = np.asarray(plage, dtype=float)
+                    gsva_arr = np.asarray(gsva, dtype=float)
+                    mask = np.isfinite(plage_arr) & np.isfinite(gsva_arr)
+                    if mask.sum() > 2:
+                        _smoothscatter(ax, plage_arr[mask], gsva_arr[mask],
+                                      "PLAGE", "GSVA", f"PLAGE vs GSVA\n{ds}", font)
+                        has_data = True
+                    else:
+                        ax.text(0.5, 0.5, "Insufficient data", transform=ax.transAxes,
+                                ha="center", va="center", fontsize=7, color="grey")
+                        ax.set_title(f"PLAGE vs GSVA\n{ds}", fontsize=font)
+                else:
+                    ax.text(0.5, 0.5, "N/A", transform=ax.transAxes,
+                            ha="center", va="center", fontsize=7, color="grey")
+                    ax.set_title(f"PLAGE vs GSVA\n{ds}", fontsize=font)
+
+            if has_data:
+                fig.suptitle(f"Enrichment Score Comparison\n{sig}", fontsize=11, y=1.02)
+                fig.tight_layout()
+                paths.append(save_pdf(fig, out_dir, f"sig_compare_ES_metrics_{sig}.pdf"))
             else:
                 plt.close(fig)
 
