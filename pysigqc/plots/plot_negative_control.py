@@ -1,11 +1,12 @@
-"""Negative and permutation control boxplots.
+"""Negative and permutation control boxplots matching R's boxplot.matrix2.R.
 
-Produces per (dataset, signature):
-- ``negative_control/<ds>/<sig>/boxplot_metrics.pdf``
-- ``permutation_control/<ds>/<sig>/boxplot_metrics.pdf``
-
-Each shows boxplots of the null distribution (from resampling) with the
-original signature's metric overlaid as a red diamond.
+R style:
+- boxplot with outline=T, outpch=NA (suppress outlier dots)
+- stripchart overlay: method='jitter', pch=2 (triangle), cex=0.5
+- Dataset colors from dataset_colors()
+- Legend: bottom, horizontal, bty='n', cex=0.6
+- Adaptive PDF sizing: <=25 metrics -> 7", <=50 -> 10", etc.
+- X-axis labels perpendicular (R las=2)
 """
 
 from __future__ import annotations
@@ -17,41 +18,74 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-from ._colors import SIG_GENE_COLOR, dataset_colors
+from ._colors import SIG_GENE_COLOR
 from ._style import save_pdf
 
 
 def _boxplot_with_overlay(
-    metrics_table,          # DataFrame: n_resamples x n_metrics
-    original_values: dict,  # metric_name -> float (observed value)
+    metrics_table,
+    original_values: dict,
     title: str,
     out_path: Path,
 ) -> Path:
-    """Draw boxplots of null distribution with observed values overlaid."""
     cols = list(metrics_table.columns)
     n = len(cols)
-    width = max(7, n * 0.5)
-    fig, ax = plt.subplots(figsize=(width, 5))
 
-    # Boxplot
+    # R's adaptive PDF sizing
+    if n <= 25:
+        width = 7
+    elif n <= 50:
+        width = 10
+    elif n <= 75:
+        width = 14
+    else:
+        width = 18
+
+    fig, ax = plt.subplots(figsize=(width, 7))
+
+    # Boxplot (R: outline=T, outpch=NA)
     bp_data = [metrics_table[c].dropna().values for c in cols]
-    bp = ax.boxplot(bp_data, positions=range(n), widths=0.6,
-                    patch_artist=True, zorder=1)
+    bp = ax.boxplot(
+        bp_data, positions=range(1, n + 1), widths=0.6,
+        patch_artist=True, showfliers=False,  # outpch=NA
+        medianprops=dict(color="black", linewidth=1),
+        whiskerprops=dict(color="black", linewidth=0.8),
+        capprops=dict(color="black", linewidth=0.8),
+        boxprops=dict(linewidth=0.8),
+    )
     for patch in bp["boxes"]:
-        patch.set_facecolor("#D3D3D3")
-        patch.set_edgecolor("#808080")
+        patch.set_facecolor("white")
+        patch.set_edgecolor("black")
 
-    # Overlay observed values
-    obs = [original_values.get(c, np.nan) for c in cols]
-    ax.scatter(range(n), obs, c=SIG_GENE_COLOR, marker="D", s=40, zorder=3,
-               edgecolors="black", linewidths=0.5, label="Original signature")
+    # Stripchart overlay: jittered triangles (R: pch=2, cex=0.5)
+    rng = np.random.default_rng(42)
+    obs_vals = [original_values.get(c, np.nan) for c in cols]
+    for i, c in enumerate(cols):
+        vals = metrics_table[c].dropna().values
+        if len(vals) > 0:
+            jitter = rng.uniform(-0.15, 0.15, size=len(vals))
+            ax.scatter(np.full(len(vals), i + 1) + jitter, vals,
+                       marker="^", s=12, c="#808080", edgecolors="none",
+                       alpha=0.5, zorder=2)
 
-    ax.set_xticks(range(n))
-    ax.set_xticklabels(cols, rotation=90, fontsize=6)
+    # Original signature values: red diamonds (prominent overlay)
+    ax.scatter(range(1, n + 1), obs_vals,
+               c=SIG_GENE_COLOR, marker="D", s=50, zorder=4,
+               edgecolors="black", linewidths=0.5,
+               label="Original signature")
+
+    # X-axis labels perpendicular (R: las=2)
+    ax.set_xticks(range(1, n + 1))
+    max_name = max(len(c) for c in cols) if cols else 10
+    label_fs = max(min(6, 7 * 12 / max_name), 4)
+    ax.set_xticklabels(cols, rotation=90, fontsize=label_fs)
     ax.set_ylim(-0.05, 1.05)
-    ax.set_ylabel("Metric value")
-    ax.set_title(title, fontsize=9)
-    ax.legend(fontsize=7, loc="upper right")
+    ax.set_ylabel("Metric value", fontsize=9)
+    ax.set_title(title, fontsize=10)
+
+    # Legend at bottom, horizontal (R: x="bottom", horiz=TRUE, bty="n")
+    ax.legend(fontsize=7, loc="lower center", bbox_to_anchor=(0.5, -0.15),
+              ncol=2, frameon=False, markerscale=0.8)
 
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -67,11 +101,9 @@ def plot_negative_control(
     names_datasets: list[str],
     out_dir: str | Path,
 ) -> list[Path]:
-    """Generate negative/permutation control boxplots. Returns PDF paths."""
     out_dir = Path(out_dir)
     paths: list[Path] = []
 
-    # Get original radar values from the output_table
     output_table = original_radar_result.get("output_table")
 
     for control_type in ("negative_controls", "permutation_controls"):
@@ -86,7 +118,6 @@ def plot_negative_control(
                 if metrics_table is None or metrics_table.empty:
                     continue
 
-                # Extract original values for overlay
                 orig = {}
                 if output_table is not None:
                     row_key = f"{sig}_{ds}"
@@ -97,7 +128,7 @@ def plot_negative_control(
                 paths.append(
                     _boxplot_with_overlay(
                         metrics_table, orig,
-                        title=f"{subdir.replace('_', ' ').title()}\n{ds} — {sig}",
+                        title=f"{subdir.replace('_', ' ').title()}\n{ds} \u2014 {sig}",
                         out_path=pdf_path,
                     )
                 )
