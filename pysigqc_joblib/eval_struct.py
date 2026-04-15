@@ -77,8 +77,14 @@ def compute_struct(
     names_sigs: list[str],
     mRNA_expr_matrix: dict[str, pd.DataFrame],
     names_datasets: list[str],
+    covariates: dict | None = None,
 ) -> dict:
-    """Compute structure metrics for each signature-dataset pair."""
+    """Compute structure metrics for each signature-dataset pair.
+
+    Args:
+        covariates: Optional dict of dataset -> {'annotations': DataFrame/Series, 'colors': dict}
+                   for heatmap annotations
+    """
     rng = np.random.default_rng(42)
 
     # Pre-convert datasets
@@ -136,4 +142,5 @@ def compute_struct(
         "all_row_names": all_row_names,
         "biclust_results": biclust_results,
         "any_biclusters": any_biclusters,
+        "covariates": covariates,  # Pass through for plotting
     }

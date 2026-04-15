@@ -191,7 +191,57 @@ def _save_tables(
                     loadings.to_csv(
                         d / f"pca_loadings_{sig}_{ds}.txt", sep="\t"
                     )
+                # Combined scoring metrics per sample
+                med = sc.get("med_scores")
+                mean = sc.get("mean_scores")
+                pca1 = sc.get("pca1_scores")
+                col_names = sc.get("common_score_cols")
+                if med is not None and mean is not None and col_names:
+                    import numpy as np
+                    metrics_df = pd.DataFrame(
+                        {"Mean_Scores": mean, "Median_Scores": med},
+                        index=col_names,
+                    )
+                    if pca1 is not None and len(pca1) == len(col_names):
+                        metrics_df["PCA1_Scores"] = pca1
+                    # Include enrichment scores if available
+                    for es_key, es_col in [
+                        ("ssgsea_scores", "ssGSEA"),
+                        ("plage_scores", "PLAGE"),
+                        ("gsva_scores", "GSVA"),
+                    ]:
+                        es = sc.get(es_key)
+                        if es is not None and len(es) == len(col_names):
+                            metrics_df[es_col] = es
+                    metrics_df.to_csv(
+                        d / f"metrics_table_{sig}_{ds}.txt", sep="\t"
+                    )
         logger.info("Saved metrics_tables/")
+
+    # --- mixture_model_out.txt ---
+    mixture_models = metrics_result.get("mixture_models", {})
+    if mixture_models:
+        lines = []
+        for sig in names_sigs:
+            for ds in names_datasets:
+                mm = mixture_models.get(sig, {}).get(ds, {})
+                for score_name in ("median", "mean", "pca1"):
+                    entry = mm.get(score_name)
+                    if isinstance(entry, dict) and entry.get("best_model"):
+                        best_k = entry["best_k"]
+                        if best_k == 1:
+                            lines.append(
+                                f"{sig} {ds}, {score_name.title()} score: "
+                                f"There is one component in the mixture model."
+                            )
+                        else:
+                            lines.append(
+                                f"{sig} {ds}, {score_name.title()} score: "
+                                f"There are {best_k} components in the mixture model."
+                            )
+        if lines:
+            (out_dir / "mixture_model_out.txt").write_text("\n".join(lines) + "\n")
+            logger.info("Saved mixture_model_out.txt")
 
     # --- standardisation_tables ---
     stan_result = result.get("stan_result", {})
@@ -213,6 +263,100 @@ def _save_tables(
                         sep="\t", index=False,
                     )
         logger.info("Saved standardisation_tables/")
+
+    # --- negative/permutation control tables ---
+    neg_result = result.get("negative_result")
+    if neg_result:
+        for control_type in ("negative_controls", "permutation_controls"):
+            controls = neg_result.get(control_type, {})
+            subdir = "negative_control" if "negative" in control_type else "permutation_control"
+            for ds in names_datasets:
+                for sig in names_sigs:
+                    data = controls.get(ds, {}).get(sig)
+                    if data is None:
+                        continue
+                    d = out_dir / subdir / ds / sig
+                    d.mkdir(parents=True, exist_ok=True)
+                    summary = data.get("summary")
+                    if summary is not None:
+                        summary.to_csv(
+                            d / f"{subdir.rstrip('_control')}_controls_summary_table.txt",
+                            sep="\t",
+                        )
+                    metrics_table = data.get("metrics_table")
+                    if metrics_table is not None:
+                        sigqc_dir = d / "sigQC" / "radarchart_table"
+                        sigqc_dir.mkdir(parents=True, exist_ok=True)
+                        metrics_table.to_csv(
+                            sigqc_dir / "radarchart_table.txt", sep="\t",
+                        )
+        logger.info("Saved negative/permutation control tables")
+
+
+def _validate_inputs(
+    gene_sigs_list: dict[str, list[str]],
+    names_sigs: list[str],
+    mRNA_expr_matrix: dict[str, pd.DataFrame],
+    names_datasets: list[str],
+    logger: logging.Logger,
+) -> tuple[dict, list, dict, list]:
+    """Validate and filter inputs, matching R's make_all_plots() validation.
+
+    Removes signatures with <2 genes (after intersection) and datasets with
+    <2 samples. Warns about low gene overlap. Exits if nothing remains.
+    """
+    from pysigqc.utils import gene_intersection
+
+    # Remove datasets with <2 samples
+    valid_datasets = {}
+    for ds in names_datasets:
+        n_samples = mRNA_expr_matrix[ds].shape[1]
+        if n_samples < 2:
+            logger.warning("Removing dataset '%s': only %d sample(s) (need >=2)", ds, n_samples)
+        else:
+            valid_datasets[ds] = mRNA_expr_matrix[ds]
+    if not valid_datasets:
+        logger.error("No datasets with >=2 samples. Aborting.")
+        raise SystemExit(1)
+    mRNA_expr_matrix = valid_datasets
+    names_datasets = list(valid_datasets.keys())
+
+    # Remove signatures with <2 genes in ANY dataset
+    valid_sigs = {}
+    for sig in names_sigs:
+        genes = gene_sigs_list[sig]
+        keep = True
+        for ds in names_datasets:
+            inter = gene_intersection(genes, mRNA_expr_matrix[ds])
+            if len(inter) < 2:
+                logger.warning(
+                    "Removing signature '%s': only %d gene(s) found in dataset '%s' (need >=2)",
+                    sig, len(inter), ds,
+                )
+                keep = False
+                break
+        if keep:
+            valid_sigs[sig] = genes
+    if not valid_sigs:
+        logger.error("No signatures with >=2 genes in all datasets. Aborting.")
+        raise SystemExit(1)
+    gene_sigs_list = valid_sigs
+    names_sigs = list(valid_sigs.keys())
+
+    # Warn about low gene overlap
+    for sig in names_sigs:
+        genes = gene_sigs_list[sig]
+        for ds in names_datasets:
+            inter = gene_intersection(genes, mRNA_expr_matrix[ds])
+            pct = len(inter) / len(genes) * 100
+            if pct < 50:
+                logger.warning(
+                    "Signature '%s' in dataset '%s': only %.0f%% of genes found (%d/%d). "
+                    "Check gene ID format.",
+                    sig, ds, pct, len(inter), len(genes),
+                )
+
+    return gene_sigs_list, names_sigs, mRNA_expr_matrix, names_datasets
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -258,6 +402,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--save-results", action="store_true", default=True,
         help="Save intermediate results as JSON/CSV (default: True).",
+    )
+    parser.add_argument(
+        "--negative-control", action="store_true",
+        help="Run negative and permutation controls (slow, default: off).",
+    )
+    parser.add_argument(
+        "--num-resampling", type=int, default=50,
+        help="Number of resamplings for negative control (default: 50).",
+    )
+    parser.add_argument(
+        "--thresholds", type=float, nargs="+", default=None,
+        help="Expression thresholds per dataset (default: median of each dataset).",
+    )
+    parser.add_argument(
+        "--covariates", type=str, default=None,
+        help="Path to covariates JSON file for heatmap annotations. "
+             "Format: {dataset: {annotations: {sample: {var1: val, ...}}, colors: {var1: {val: color}}}}",
     )
 
     # Logging
@@ -309,9 +470,45 @@ def main(argv: list[str] | None = None) -> int:
     logger.info("Signatures (%d): %s", len(names_sigs), names_sigs)
 
     # -------------------------------------------------------------------------
+    # Validate inputs (matching R's make_all_plots() checks)
+    # -------------------------------------------------------------------------
+    gene_sigs_list, names_sigs, mRNA_expr_matrix, names_datasets = _validate_inputs(
+        gene_sigs_list, names_sigs, mRNA_expr_matrix, names_datasets, logger
+    )
+
+    # -------------------------------------------------------------------------
     # Run pipeline
     # -------------------------------------------------------------------------
     from pysigqc_joblib.pipeline import run_pipeline
+
+    # Validate thresholds if provided
+    thresholds = args.thresholds
+    if thresholds is not None:
+        if len(thresholds) != len(names_datasets):
+            logger.error(
+                "Number of thresholds (%d) must match number of datasets (%d)",
+                len(thresholds), len(names_datasets)
+            )
+            return 1
+        logger.info("Using custom thresholds: %s", dict(zip(names_datasets, thresholds)))
+
+    # Load covariates if provided
+    covariates = None
+    if args.covariates:
+        cov_path = Path(args.covariates)
+        if not cov_path.exists():
+            logger.error("Covariates file not found: %s", cov_path)
+            return 1
+        with open(cov_path) as f:
+            cov_data = json.load(f)
+        # Convert annotations to DataFrames
+        covariates = {}
+        for ds, ds_cov in cov_data.items():
+            covariates[ds] = {
+                "annotations": pd.DataFrame(ds_cov.get("annotations", {})).T,
+                "colors": ds_cov.get("colors", {}),
+            }
+        logger.info("Loaded covariates for datasets: %s", list(covariates.keys()))
 
     logger.info("Running QC pipeline (n_jobs=%s)...", args.n_jobs)
     result = run_pipeline(
@@ -321,6 +518,10 @@ def main(argv: list[str] | None = None) -> int:
         names_datasets=names_datasets,
         n_jobs=args.n_jobs,
         verbose=args.verbose,
+        do_negative_control=args.negative_control,
+        num_resampling=args.num_resampling,
+        thresholds=thresholds,
+        covariates=covariates,
     )
     logger.info("Pipeline completed in %.2f seconds.", result["elapsed_seconds"])
 
@@ -329,6 +530,16 @@ def main(argv: list[str] | None = None) -> int:
     # -------------------------------------------------------------------------
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Set up log file (matching R's log.log)
+    log_path = out_dir / "log.log"
+    file_handler = logging.FileHandler(log_path, mode="w")
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    )
+    logging.getLogger().addHandler(file_handler)
+    logger.info("pysigQC log started")
 
     if args.save_results:
         _save_tables(result, names_sigs, names_datasets, out_dir, logger)

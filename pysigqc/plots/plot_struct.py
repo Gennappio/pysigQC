@@ -24,6 +24,61 @@ from ._style import save_pdf
 _HEATMAP_CMAP = "RdBu_r"
 
 
+def _build_col_colors(covariates: dict | None, ds: str, sample_names: list) -> tuple:
+    """Build column colors for seaborn clustermap from covariates.
+
+    Args:
+        covariates: dict of dataset -> {'annotations': DataFrame/Series, 'colors': dict}
+        ds: dataset name
+        sample_names: list of sample names (columns in expression matrix)
+
+    Returns:
+        (col_colors DataFrame or None, palette dict or None)
+    """
+    import pandas as pd
+
+    if covariates is None or ds not in covariates:
+        return None, None
+
+    cov_data = covariates[ds]
+    annotations = cov_data.get("annotations")
+    colors = cov_data.get("colors", {})
+
+    if annotations is None:
+        return None, None
+
+    # Convert to DataFrame if Series
+    if isinstance(annotations, pd.Series):
+        annotations = annotations.to_frame()
+
+    # Subset to samples in the expression matrix
+    common_samples = [s for s in sample_names if s in annotations.index]
+    if not common_samples:
+        return None, None
+
+    annotations = annotations.loc[common_samples]
+
+    # Build color mapping for each annotation column
+    col_colors = pd.DataFrame(index=common_samples)
+    palette = {}
+
+    for col in annotations.columns:
+        vals = annotations[col]
+        if col in colors:
+            # Use provided colors
+            col_palette = colors[col]
+        else:
+            # Generate colors for unique values
+            unique_vals = vals.dropna().unique()
+            default_colors = sns.color_palette("husl", len(unique_vals))
+            col_palette = dict(zip(unique_vals, default_colors))
+
+        col_colors[col] = vals.map(col_palette)
+        palette[col] = col_palette
+
+    return col_colors, palette
+
+
 def plot_struct(
     struct_result: dict,
     names_sigs: list[str],
@@ -32,6 +87,7 @@ def plot_struct(
 ) -> list[Path]:
     sig_scores = struct_result.get("sig_scores_all_mats", {})
     biclust = struct_result.get("biclust_results", {})
+    covariates = struct_result.get("covariates")
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -49,11 +105,15 @@ def plot_struct(
             fig_w = max(5, n_samples * 0.08 + 2)
             fig_h = max(4, n_genes * 0.25 + 2)
 
+            # Build column colors from covariates
+            col_colors, _ = _build_col_colors(covariates, ds, list(mat.columns))
+
             try:
                 g = sns.clustermap(
                     mat.astype(float),
                     cmap=_HEATMAP_CMAP,
                     row_cluster=True, col_cluster=False,
+                    col_colors=col_colors,
                     figsize=(fig_w, fig_h),
                     xticklabels=False,
                     yticklabels=True if n_genes <= 50 else False,

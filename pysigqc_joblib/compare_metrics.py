@@ -20,6 +20,9 @@ from sklearn.mixture import GaussianMixture
 from ._core import to_numpy, gene_indices, rows_without_nan, nanmedian_cols, nanmean_rows
 from .utils import gene_intersection
 
+# Import enrichment functions from reference implementation
+from pysigqc.compare_metrics import _gsva_score, _ssgsea_score, _plage_score
+
 INCREMENTAL_THRESHOLD = 50_000
 
 
@@ -53,6 +56,7 @@ def compute_metrics(
     names_sigs: list[str],
     mRNA_expr_matrix: dict[str, pd.DataFrame],
     names_datasets: list[str],
+    compute_enrichment: bool = True,
 ) -> dict:
     """Compute scoring comparison metrics for each signature-dataset pair."""
     _t0 = time.perf_counter()
@@ -61,6 +65,7 @@ def compute_metrics(
     pca_results: dict = {}
     score_cor_mats: dict = {}
     mixture_models: dict = {}
+    enrichment_scores: dict = {}
 
     # Pre-convert datasets
     ds_cache: dict = {}
@@ -76,6 +81,7 @@ def compute_metrics(
         scores_all[sig] = {}
         pca_results[sig] = {}
         mixture_models[sig] = {}
+        enrichment_scores[sig] = {}
 
         for ds in names_datasets:
             arr, row_names, col_names = ds_cache[ds]
@@ -108,6 +114,21 @@ def compute_metrics(
             pca_results[sig][ds] = {
                 "pca_obj": pca_obj,
                 "props_of_variances": props_of_variances,
+            }
+
+            # --- Compute enrichment scores (GSVA, ssGSEA, PLAGE) ---
+            gsva_scores = ssgsea_scores = plage_scores = None
+            if compute_enrichment and len(inter) >= 2:
+                sig_idx_list = list(sig_idx)
+                if len(sig_idx_list) >= 2:
+                    gsva_scores = _gsva_score(arr, sig_idx_list)
+                    ssgsea_scores = _ssgsea_score(arr, sig_idx_list)
+                    plage_scores = _plage_score(arr, sig_idx_list)
+
+            enrichment_scores[sig][ds] = {
+                "gsva": gsva_scores,
+                "ssgsea": ssgsea_scores,
+                "plage": plage_scores,
             }
 
             # Spearman correlations
@@ -144,23 +165,49 @@ def compute_metrics(
                         max_k = max(max_k, 1)
                         best_bic = np.inf
                         best_model = None
+                        bic_values = []
                         for k in range(1, max_k + 1):
                             try:
                                 gm = GaussianMixture(n_components=k, random_state=42)
                                 gm.fit(clean.reshape(-1, 1))
                                 bic = gm.bic(clean.reshape(-1, 1))
+                                bic_values.append((k, bic))
                                 if bic < best_bic:
                                     best_bic = bic
                                     best_model = gm
                             except Exception:
                                 pass
-                        mm[score_name] = best_model
+                        mm[score_name] = {
+                            "best_model": best_model,
+                            "bic_values": bic_values,
+                            "best_k": best_model.n_components if best_model else None,
+                        }
             mixture_models[sig][ds] = mm
+
+            # --- Build scoring correlation matrix ---
+            score_cols = {"Mean": med_scores, "Median": mean_scores}
+            if pca1_scores is not None:
+                score_cols["PCA1"] = pca1_scores
+            # Add enrichment scores if available
+            if gsva_scores is not None and np.isfinite(gsva_scores).any():
+                score_cols["GSVA"] = gsva_scores
+            if ssgsea_scores is not None and np.isfinite(ssgsea_scores).any():
+                score_cols["ssGSEA"] = ssgsea_scores
+            if plage_scores is not None and np.isfinite(plage_scores).any():
+                score_cols["PLAGE"] = plage_scores
+
+            if len(score_cols) >= 2:
+                score_df = pd.DataFrame(score_cols)
+                cor_mat = score_df.corr(method="spearman")
+                score_cor_mats[f"{ds}_{sig}"] = cor_mat
 
             scores_all[sig][ds] = {
                 "med_scores": med_scores,
                 "mean_scores": mean_scores,
                 "pca1_scores": pca1_scores,
+                "gsva_scores": gsva_scores,
+                "ssgsea_scores": ssgsea_scores,
+                "plage_scores": plage_scores,
                 "common_score_cols": col_names,
                 "props_of_variances": props_of_variances,
             }
@@ -171,5 +218,6 @@ def compute_metrics(
         "pca_results": pca_results,
         "score_cor_mats": score_cor_mats,
         "mixture_models": mixture_models,
+        "enrichment_scores": enrichment_scores,
         "elapsed_seconds": time.perf_counter() - _t0,
     }

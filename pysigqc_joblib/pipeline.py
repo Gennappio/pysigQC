@@ -16,6 +16,7 @@ from .eval_expr import compute_expr
 from .eval_compactness import compute_compactness
 from .eval_stan import compute_stan
 from .compare_metrics import compute_metrics
+from .eval_struct import compute_struct
 from .radar_chart import compute_radar
 
 
@@ -31,11 +32,16 @@ def run_pipeline(
     names_datasets: list[str],
     n_jobs: int = -1,
     verbose: bool = False,
+    do_negative_control: bool = False,
+    num_resampling: int = 50,
+    thresholds: dict[str, float] | list[float] | None = None,
+    covariates: dict | None = None,
 ) -> dict:
     """Run the full QC pipeline.
 
-    Parallelizes across the 5 independent compute modules, then assembles
-    the radar chart from their outputs.
+    Parallelizes across 6 independent compute modules, then assembles
+    the radar chart from their outputs. Optionally runs negative/permutation
+    controls.
 
     Args:
         gene_sigs_list: dict of signature name -> gene list
@@ -44,37 +50,56 @@ def run_pipeline(
         names_datasets: ordered list of dataset names
         n_jobs: number of parallel jobs (-1 = all cores)
         verbose: if True, print progress
+        do_negative_control: if True, run negative and permutation controls
+        num_resampling: number of resamplings for negative control (default 50)
+        thresholds: expression thresholds per dataset (dict or list, default: median)
+        covariates: dict of dataset -> {annotations, colors} for struct heatmaps
 
     Returns dict with:
-        var_result, expr_result, compact_result, stan_result, metrics_result:
-            Individual module results
+        var_result, expr_result, compact_result, stan_result, metrics_result,
+        struct_result: Individual module results
         radar_result: Assembled radar chart with output_table
         radar_values: Merged per-sig per-dataset metric dicts
+        negative_result: Negative/permutation control results (if requested)
     """
     _t0 = time.perf_counter()
 
-    modules = [
+    # Convert thresholds list to dict if needed
+    if isinstance(thresholds, list):
+        if len(thresholds) != len(names_datasets):
+            raise ValueError(
+                f"Number of thresholds ({len(thresholds)}) must match "
+                f"number of datasets ({len(names_datasets)})"
+            )
+        thresholds = dict(zip(names_datasets, thresholds))
+
+    # Run modules that don't need special parameters
+    modules_standard = [
         ("var", compute_var),
-        ("expr", compute_expr),
         ("compactness", compute_compactness),
         ("stan", compute_stan),
         ("metrics", compute_metrics),
     ]
 
-    # Run all 5 modules in parallel
-    results = Parallel(n_jobs=min(n_jobs if n_jobs > 0 else 5, 5), prefer="threads")(
+    # Run standard modules in parallel
+    results_standard = Parallel(n_jobs=min(n_jobs if n_jobs > 0 else 4, 4), prefer="threads")(
         delayed(_compute_module)(
             fn, gene_sigs_list, names_sigs, mRNA_expr_matrix, names_datasets
         )
-        for name, fn in modules
+        for name, fn in modules_standard
     )
+    var_r, compact_r, stan_r, metrics_r = results_standard
 
-    var_r, expr_r, compact_r, stan_r, metrics_r = results
+    # Run expr with thresholds parameter
+    expr_r = compute_expr(gene_sigs_list, names_sigs, mRNA_expr_matrix, names_datasets, thresholds=thresholds)
+
+    # Run struct with covariates parameter
+    struct_r = compute_struct(gene_sigs_list, names_sigs, mRNA_expr_matrix, names_datasets, covariates=covariates)
 
     if verbose:
         print("All compute modules complete. Assembling radar chart...")
 
-    # Merge radar values
+    # Merge radar values (struct has no radar_values)
     radar_values: dict = {}
     for sig in names_sigs:
         radar_values[sig] = {}
@@ -89,13 +114,28 @@ def run_pipeline(
 
     radar_result = compute_radar(radar_values, names_sigs, names_datasets)
 
-    return {
+    result = {
         "var_result": var_r,
         "expr_result": expr_r,
         "compact_result": compact_r,
         "stan_result": stan_r,
         "metrics_result": metrics_r,
+        "struct_result": struct_r,
         "radar_result": radar_result,
         "radar_values": radar_values,
         "elapsed_seconds": time.perf_counter() - _t0,
     }
+
+    # Optionally run negative/permutation controls
+    if do_negative_control:
+        if verbose:
+            print(f"Running negative/permutation controls ({num_resampling} resamplings)...")
+        from pysigqc.negative_control import run_negative_control
+        neg_result = run_negative_control(
+            gene_sigs_list, mRNA_expr_matrix,
+            num_resampling=num_resampling,
+        )
+        result["negative_result"] = neg_result
+        result["elapsed_seconds"] = time.perf_counter() - _t0
+
+    return result

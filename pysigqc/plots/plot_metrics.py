@@ -165,4 +165,58 @@ def plot_metrics(
         fig.tight_layout()
         paths.append(save_pdf(fig, out_dir, f"sig_qq_plots_{sig}.pdf"))
 
+    # --- Scoring metrics correlation heatmaps ---
+    score_cor_mats = metrics_result.get("score_cor_mats", {})
+    if score_cor_mats:
+        import seaborn as sns
+        for sig in names_sigs:
+            for ds in names_datasets:
+                key = f"{ds}_{sig}"
+                cor_mat = score_cor_mats.get(key)
+                if cor_mat is None or cor_mat.shape[0] < 2:
+                    continue
+                fig, ax = plt.subplots(figsize=(4, 4))
+                sns.heatmap(
+                    cor_mat, vmin=-1, vmax=1, cmap="RdBu_r", center=0,
+                    annot=True, fmt=".2f", square=True, ax=ax,
+                    linewidths=0.5, cbar_kws={"shrink": 0.8, "label": "Spearman rho"},
+                )
+                ax.set_title(f"Scoring Metric Correlation\n{ds}  {sig}", fontsize=9)
+                fig.tight_layout()
+                paths.append(save_pdf(fig, out_dir, f"scoring_metrics_corr_{ds}_{sig}.pdf"))
+
+    # --- Gaussian Mixture Model BIC plots ---
+    mixture_models = metrics_result.get("mixture_models", {})
+    if mixture_models:
+        for sig in names_sigs:
+            fig, axes = plt.subplots(3, n_ds, figsize=(3 * n_ds, 9), squeeze=False)
+            has_data = False
+            for di, ds in enumerate(names_datasets):
+                mm = mixture_models.get(sig, {}).get(ds, {})
+                for ri, score_name in enumerate(["median", "mean", "pca1"]):
+                    ax = axes[ri, di]
+                    entry = mm.get(score_name)
+                    bic_values = None
+                    if isinstance(entry, dict):
+                        bic_values = entry.get("bic_values", [])
+                    if bic_values:
+                        ks, bics = zip(*bic_values)
+                        ax.plot(ks, bics, "o-", color="black", markersize=4, linewidth=1)
+                        ax.set_xlabel("Number of components", fontsize=7)
+                        ax.set_ylabel("BIC", fontsize=7)
+                        ax.set_title(f"{score_name.title()} score\n{ds}", fontsize=font)
+                        ax.tick_params(labelsize=6)
+                        has_data = True
+                    else:
+                        ax.text(0.5, 0.5, "N/A", transform=ax.transAxes,
+                                ha="center", va="center", fontsize=7, color="grey")
+                        ax.set_title(f"{score_name.title()} score\n{ds}", fontsize=font)
+
+            if has_data:
+                fig.suptitle(f"Gaussian Mixture Model BIC\n{sig}", fontsize=11, y=1.02)
+                fig.tight_layout()
+                paths.append(save_pdf(fig, out_dir, f"sig_gaussian_mixture_model_{sig}.pdf"))
+            else:
+                plt.close(fig)
+
     return paths
