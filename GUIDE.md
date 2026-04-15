@@ -461,6 +461,14 @@ python main.py --datasets data.csv --signatures sigs.csv --out-dir results/ --no
 
 # Verbose output with custom parallelism
 python main.py -d data.csv -s sigs.csv -o results/ -v --n-jobs 4
+
+
+# You can try
+ python main.py --datasets "sigQC-master/tests/fixtures/fixture_medium_dataset_*.csv" --signatures sigQC-master/tests/fixtures/fixture_medium_signatures.csv --out-dir results/                      
+
+  # Or alternatively, use the small fixtures together:
+                                              
+  python main.py --datasets "sigQC-master/tests/fixtures/fixture_dataset_*.csv" --signatures sigQC-master/tests/fixtures/fixture_signatures.csv --out-dir results/
 ```
 
 ### Supported Input Formats

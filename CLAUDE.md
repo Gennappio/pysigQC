@@ -73,10 +73,3 @@ Each module follows the same interface pattern: `eval_*_loc(gene_sigs_list, name
 
 Bioconductor: `ComplexHeatmap`, `GSVA`. CRAN: `biclust`, `fmsb`, `moments`, `mclust`, `circlize`, `gplots`. Optional: `RankProd` for rank product analysis across datasets.
 
-### Project Goal
-
-The idea is to perform four things:
-1) make the R code in the folder sigQC-master understandable, add comments in the code. 
-2) try to revise it to find errors and/or theoretical inconsistencies
-3) refactor the code to make it testable and make unit tests for each function
-4) port the code to Python to make it scalable to million cells
