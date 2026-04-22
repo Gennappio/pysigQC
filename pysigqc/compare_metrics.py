@@ -180,6 +180,7 @@ def compute_metrics(
     mRNA_expr_matrix: dict[str, pd.DataFrame],
     names_datasets: list[str],
     compute_enrichment: bool = True,
+    fit_mixture: bool = True,
 ) -> dict:
     """Compute scoring comparison metrics for each signature-dataset pair.
 
@@ -189,6 +190,7 @@ def compute_metrics(
         mRNA_expr_matrix: dict of dataset name -> DataFrame (genes x samples)
         names_datasets: list of dataset names
         compute_enrichment: if True, compute GSVA/ssGSEA/PLAGE scores
+        fit_mixture: if True, fit Gaussian mixture models on scoring arrays
 
     Returns dict with keys:
         radar_values: nested dict [sig][dataset] -> dict of 4 metrics
@@ -293,32 +295,33 @@ def compute_metrics(
 
             # --- Mixture models (using sklearn instead of mclust) ---
             mm = {"median": None, "mean": None, "pca1": None}
-            for score_name, score_arr in [("median", med_scores), ("mean", mean_scores),
-                                           ("pca1", pca1_scores)]:
-                if score_arr is not None and len(score_arr) > 1:
-                    clean = score_arr[np.isfinite(score_arr)]
-                    if len(clean) >= 2:
-                        max_k = min(len(clean) // 2, 10)
-                        max_k = max(max_k, 1)
-                        best_bic = np.inf
-                        best_model = None
-                        bic_values = []
-                        for k in range(1, max_k + 1):
-                            try:
-                                gm = GaussianMixture(n_components=k, random_state=42)
-                                gm.fit(clean.reshape(-1, 1))
-                                bic = gm.bic(clean.reshape(-1, 1))
-                                bic_values.append((k, bic))
-                                if bic < best_bic:
-                                    best_bic = bic
-                                    best_model = gm
-                            except Exception:
-                                pass
-                        mm[score_name] = {
-                            "best_model": best_model,
-                            "bic_values": bic_values,
-                            "best_k": best_model.n_components if best_model else None,
-                        }
+            if fit_mixture:
+                for score_name, score_arr in [("median", med_scores), ("mean", mean_scores),
+                                               ("pca1", pca1_scores)]:
+                    if score_arr is not None and len(score_arr) > 1:
+                        clean = score_arr[np.isfinite(score_arr)]
+                        if len(clean) >= 2:
+                            max_k = min(len(clean) // 2, 10)
+                            max_k = max(max_k, 1)
+                            best_bic = np.inf
+                            best_model = None
+                            bic_values = []
+                            for k in range(1, max_k + 1):
+                                try:
+                                    gm = GaussianMixture(n_components=k, random_state=42)
+                                    gm.fit(clean.reshape(-1, 1))
+                                    bic = gm.bic(clean.reshape(-1, 1))
+                                    bic_values.append((k, bic))
+                                    if bic < best_bic:
+                                        best_bic = bic
+                                        best_model = gm
+                                except Exception:
+                                    pass
+                            mm[score_name] = {
+                                "best_model": best_model,
+                                "bic_values": bic_values,
+                                "best_k": best_model.n_components if best_model else None,
+                            }
             mixture_models[sig][ds] = mm
 
             # --- Build scoring correlation matrix ---

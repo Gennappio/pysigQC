@@ -43,7 +43,13 @@ def _compute_qc_metrics(
         ("var", lambda: compute_var(gene_sigs_list, names_sigs, mRNA_expr_matrix, names_datasets)),
         ("expr", lambda: compute_expr(gene_sigs_list, names_sigs, mRNA_expr_matrix, names_datasets)),
         ("compactness", lambda: compute_compactness(gene_sigs_list, names_sigs, mRNA_expr_matrix, names_datasets)),
-        ("metrics", lambda: compute_metrics(gene_sigs_list, names_sigs, mRNA_expr_matrix, names_datasets)),
+        # GSVA / ssGSEA / PLAGE and Gaussian mixture models are skipped: neither
+        # output is consumed by the negative/permutation control summarization,
+        # which reads only the 4 radar metrics from output_table.
+        ("metrics", lambda: compute_metrics(gene_sigs_list, names_sigs, mRNA_expr_matrix,
+                                             names_datasets,
+                                             compute_enrichment=False,
+                                             fit_mixture=False)),
         ("stan", lambda: compute_stan(gene_sigs_list, names_sigs, mRNA_expr_matrix, names_datasets)),
     ]
 
