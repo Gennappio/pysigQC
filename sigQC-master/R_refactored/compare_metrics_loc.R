@@ -14,7 +14,14 @@
 #   $pca_results     — nested list [[sig]][[dataset]] with PCA objects
 #   $score_cor_mats  — named list of scoring metric correlation matrices
 #   $mixture_models  — nested list [[sig]][[dataset]] with mclust results
-compute_metrics <- function(gene_sigs_list, names_sigs, mRNA_expr_matrix, names_datasets) {
+#
+# When `radar_only = TRUE`, the caller only needs the 4 radar metrics; the
+# GSVA/ssGSEA/PLAGE enrichment scores, the score correlation matrices, and
+# the Gaussian mixture models are skipped. This is used by the negative /
+# permutation control pipelines where these plotting-only outputs are never
+# consumed, and reduces the cost of each resampling iteration by >20x.
+compute_metrics <- function(gene_sigs_list, names_sigs, mRNA_expr_matrix,
+                            names_datasets, radar_only = FALSE) {
   radar_values <- list()
   scores_all <- list()
   pca_results <- list()
@@ -57,24 +64,25 @@ compute_metrics <- function(gene_sigs_list, names_sigs, mRNA_expr_matrix, names_
       )
 
       # --- Compute enrichment scores ---
-      data.matrix.gsva <- data.matrix
-      if (!is.matrix(data.matrix)) {
-        data.matrix.gsva <- as.matrix.data.frame(data.matrix, rownames.force = TRUE)
-      }
-
       es.gsva <- es.ssGSEA <- es.plage <- NULL
-      tryCatch({
-        gsvaPar <- GSVA::ssgseaParam(data.matrix.gsva, list(inter))
-        es.ssGSEA <- suppressWarnings(GSVA::gsva(gsvaPar, verbose = FALSE))[1, ]
+      if (!radar_only) {
+        data.matrix.gsva <- data.matrix
+        if (!is.matrix(data.matrix)) {
+          data.matrix.gsva <- as.matrix.data.frame(data.matrix, rownames.force = TRUE)
+        }
+        tryCatch({
+          gsvaPar <- GSVA::ssgseaParam(data.matrix.gsva, list(inter))
+          es.ssGSEA <- suppressWarnings(GSVA::gsva(gsvaPar, verbose = FALSE))[1, ]
 
-        gsvaPar <- GSVA::gsvaParam(data.matrix.gsva, list(inter))
-        es.gsva <- suppressWarnings(GSVA::gsva(gsvaPar, verbose = FALSE))[1, ]
+          gsvaPar <- GSVA::gsvaParam(data.matrix.gsva, list(inter))
+          es.gsva <- suppressWarnings(GSVA::gsva(gsvaPar, verbose = FALSE))[1, ]
 
-        gsvaPar <- GSVA::plageParam(data.matrix.gsva, list(inter))
-        es.plage <- suppressWarnings(GSVA::gsva(gsvaPar, verbose = FALSE))[1, ]
-      }, error = function(e) {
-        # GSVA may fail with too few genes
-      })
+          gsvaPar <- GSVA::plageParam(data.matrix.gsva, list(inter))
+          es.plage <- suppressWarnings(GSVA::gsva(gsvaPar, verbose = FALSE))[1, ]
+        }, error = function(e) {
+          # GSVA may fail with too few genes
+        })
+      }
 
       # --- Compute correlations ---
       if (!is.null(pca1_scores)) {
@@ -141,20 +149,22 @@ compute_metrics <- function(gene_sigs_list, names_sigs, mRNA_expr_matrix, names_
         median = NULL, mean = NULL, pca1 = NULL
       )
 
-      if (length(med_scores) > 1) {
-        max_clusters <- min(ceiling(sum(!is.na(med_scores)) / 2), 10)
-        mixture_models[[names_sigs[k]]][[names_datasets[i]]][['median']] <-
-          mclust::Mclust(med_scores, G = 1:max_clusters)
-      }
-      if (length(mean_scores) > 1) {
-        max_clusters <- min(ceiling(sum(!is.na(mean_scores)) / 2), 10)
-        mixture_models[[names_sigs[k]]][[names_datasets[i]]][['mean']] <-
-          mclust::Mclust(mean_scores, G = 1:max_clusters)
-      }
-      if (length(pca1_scores) > 1) {
-        max_clusters <- min(ceiling(sum(!is.na(pca1_scores)) / 2), 10)
-        mixture_models[[names_sigs[k]]][[names_datasets[i]]][['pca1']] <-
-          mclust::Mclust(pca1_scores, G = 1:max_clusters)
+      if (!radar_only) {
+        if (length(med_scores) > 1) {
+          max_clusters <- min(ceiling(sum(!is.na(med_scores)) / 2), 10)
+          mixture_models[[names_sigs[k]]][[names_datasets[i]]][['median']] <-
+            mclust::Mclust(med_scores, G = 1:max_clusters)
+        }
+        if (length(mean_scores) > 1) {
+          max_clusters <- min(ceiling(sum(!is.na(mean_scores)) / 2), 10)
+          mixture_models[[names_sigs[k]]][[names_datasets[i]]][['mean']] <-
+            mclust::Mclust(mean_scores, G = 1:max_clusters)
+        }
+        if (length(pca1_scores) > 1) {
+          max_clusters <- min(ceiling(sum(!is.na(pca1_scores)) / 2), 10)
+          mixture_models[[names_sigs[k]]][[names_datasets[i]]][['pca1']] <-
+            mclust::Mclust(pca1_scores, G = 1:max_clusters)
+        }
       }
 
       # Store all scores for plotting

@@ -2,105 +2,136 @@
 #
 # Optimized version of negative and permutation controls.
 # Key optimizations over the corrected version:
-#   1. No file I/O roundtrip — compute_*() return results in memory
+#   1. No file I/O roundtrip — QC metrics computed in memory (no radarchart_table.txt
+#      write/read between compute and summarize)
 #   2. Sparse permutation — only permute signature gene rows, not full matrix copies
 #   3. Vectorized quantile computation — single apply() instead of 6 separate calls
-#   4. parallel::mclapply() for resampling (with lapply fallback on Windows)
+#   4. parallel::mclapply() over the compute step, chunked by signature (NC) or
+#      dataset (PC) so each worker amortizes per-module overhead across many
+#      (sig, dataset) pairs (with lapply fallback on Windows / n_cores <= 1)
 #   5. BUG-1 fix: sample() instead of runif()
 #   6. Deduplicated summary/plotting logic via helper functions
 #
-# This file depends on the compute_*() functions from R_refactored/.
-# Source them before using this file:
-#   source("R_refactored/eval_var_loc.R")
-#   source("R_refactored/eval_expr_loc.R")
-#   ... etc
+# Compute backend: uses eval_*_loc_noplots() from R_corrected/compute_without_plots.R
+# (the R_refactored/compute_*() variants showed a 6-14x per-module regression on the
+# medium fixture, so we delegate to the faster noplots layer here).
+# Radar matrix assembly uses compute_radar() from R_refactored/make_radar_chart_loc.R
+# (in-memory, no disk write).
+#
+# Source these before using this file:
+#   source("R_corrected/compute_without_plots.R")   # eval_*_loc_noplots
+#   source("R_refactored/make_radar_chart_loc.R")   # compute_radar
+#   source("R_corrected/boxplot.matrix2.R")         # .boxplot.matrix2
 
 # ============================================================================
-# Helper: detect available cores and choose parallel backend
+# Helper: choose parallel backend. Default is serial (n_cores = 1) because
+# end-to-end benchmarks on the medium fixture show that forking overhead and
+# per-chunk assembly dominate the compute savings at rePower <= 500. The
+# compute step itself scales (~2.5x at 8 cores in isolation), so multi-core
+# may still help on much larger rePower / larger expression matrices; callers
+# who want to try it pass n_cores explicitly.
 # ============================================================================
 .get_apply_fn <- function(n_cores = NULL) {
-  if (.Platform$OS.type == "windows") {
-    return(lapply)
+  if (is.null(n_cores) || .Platform$OS.type == "windows") {
+    return(list(apply_fn = lapply, n_cores = 1L))
   }
-  if (is.null(n_cores)) {
-    n_cores <- max(1, parallel::detectCores() - 1)
+  n_cores <- as.integer(n_cores)
+  if (n_cores <= 1L) {
+    return(list(apply_fn = lapply, n_cores = 1L))
   }
-  function(X, FUN, ...) parallel::mclapply(X, FUN, ..., mc.cores = n_cores)
+  list(
+    apply_fn = function(X, FUN, ...) parallel::mclapply(X, FUN, ..., mc.cores = n_cores),
+    n_cores = n_cores
+  )
 }
 
 # ============================================================================
-# Helper: compute QC metrics in memory (no disk I/O)
-# Returns radar_plot_values directly instead of writing/reading radarchart_table.txt
+# Helper: run all 5 eval_*_loc_noplots modules on a (sub_sigs, sub_ds) partition
+# and return a nested radar_plot_values list keyed by sig then dataset.
+# ============================================================================
+.run_noplots_chunk <- function(sub_sigs_list, sub_sig_names,
+                                sub_expr_list, sub_ds_names) {
+  rv <- list()
+  for (sn in sub_sig_names) rv[[sn]] <- list()
+
+  scratch_log <- tempfile(pattern = "sigqc_opt_log_", fileext = ".log")
+  log.con <- file(scratch_log, open = "a")
+  on.exit({ try(close(log.con), silent = TRUE); unlink(scratch_log) }, add = TRUE)
+
+  tryCatch({ rv <- eval_var_loc_noplots(
+    sub_sigs_list, sub_sig_names, sub_expr_list, sub_ds_names,
+    out_dir = tempdir(), file = log.con, showResults = FALSE,
+    radar_plot_values = rv) }, error = function(e) {})
+
+  tryCatch({ rv <- eval_expr_loc_noplots(
+    sub_sigs_list, sub_sig_names, sub_expr_list, sub_ds_names,
+    thresholds = NULL, out_dir = tempdir(), file = log.con, showResults = FALSE,
+    radar_plot_values = rv) }, error = function(e) {})
+
+  tryCatch({ rv <- eval_compactness_loc_noplots(
+    sub_sigs_list, sub_sig_names, sub_expr_list, sub_ds_names,
+    out_dir = tempdir(), file = log.con, showResults = FALSE,
+    radar_plot_values = rv, logged = TRUE, origin = NULL) }, error = function(e) {})
+
+  tryCatch({ rv <- compare_metrics_loc_noplots(
+    sub_sigs_list, sub_sig_names, sub_expr_list, sub_ds_names,
+    out_dir = tempdir(), file = log.con, showResults = FALSE,
+    radar_plot_values = rv) }, error = function(e) {})
+
+  tryCatch({ rv <- eval_stan_loc_noplots(
+    sub_sigs_list, sub_sig_names, sub_expr_list, sub_ds_names,
+    out_dir = tempdir(), file = log.con, showResults = FALSE,
+    radar_plot_values = rv) }, error = function(e) {})
+
+  rv
+}
+
+# ============================================================================
+# Helper: compute QC metrics in memory (no disk I/O), parallelized over the
+# larger of (signatures, datasets). Work is split into `n_parallel` chunks so
+# each forked worker amortizes per-module overhead across multiple pairs.
+# Returns the radar chart output_table directly instead of writing/reading
+# radarchart_table.txt.
 # ============================================================================
 .compute_qc_metrics_inmemory <- function(gene_sigs_list, names_sigs,
-                                          mRNA_expr_matrix, names_datasets) {
-  radar_plot_values <- list()
-  for (k in seq_along(names_sigs)) {
-    radar_plot_values[[names_sigs[k]]] <- list()
+                                          mRNA_expr_matrix, names_datasets,
+                                          par_apply = lapply, n_parallel = 1L) {
+  n_sigs <- length(names_sigs)
+  n_ds   <- length(names_datasets)
+
+  # Pick chunking axis: the one with more items. Negative controls have
+  # n_sigs == rePower, n_ds == 1; permutation controls have the reverse.
+  chunk_on_sigs <- (n_sigs >= n_ds)
+  n_axis <- if (chunk_on_sigs) n_sigs else n_ds
+  n_chunks <- max(1L, min(as.integer(n_parallel), n_axis))
+  groups <- ((seq_len(n_axis) - 1L) %% n_chunks) + 1L
+  chunk_idx_list <- split(seq_len(n_axis), groups)
+
+  if (chunk_on_sigs) {
+    per_chunk <- par_apply(chunk_idx_list, function(sig_idx) {
+      sub_names <- names_sigs[sig_idx]
+      .run_noplots_chunk(gene_sigs_list[sub_names], sub_names,
+                          mRNA_expr_matrix, names_datasets)
+    })
+  } else {
+    per_chunk <- par_apply(chunk_idx_list, function(ds_idx) {
+      sub_names <- names_datasets[ds_idx]
+      .run_noplots_chunk(gene_sigs_list, names_sigs,
+                          mRNA_expr_matrix[sub_names], sub_names)
+    })
   }
 
-  # Run each compute module, collecting radar values
-  tryCatch({
-    r <- compute_var(gene_sigs_list, names_sigs, mRNA_expr_matrix, names_datasets)
-    for (k in seq_along(names_sigs)) {
-      for (i in seq_along(names_datasets)) {
-        vals <- r$radar_values[[names_sigs[k]]][[names_datasets[i]]]
-        for (m in names(vals)) {
-          radar_plot_values[[names_sigs[k]]][[names_datasets[i]]][m] <- vals[m]
-        }
+  # Assemble nested radar_plot_values from the per-chunk results
+  radar_plot_values <- list()
+  for (sn in names_sigs) radar_plot_values[[sn]] <- list()
+  for (rv in per_chunk) {
+    for (sn in names(rv)) {
+      for (dn in names(rv[[sn]])) {
+        radar_plot_values[[sn]][[dn]] <- rv[[sn]][[dn]]
       }
     }
-  }, error = function(e) {})
+  }
 
-  tryCatch({
-    r <- compute_expr(gene_sigs_list, names_sigs, mRNA_expr_matrix, names_datasets)
-    for (k in seq_along(names_sigs)) {
-      for (i in seq_along(names_datasets)) {
-        vals <- r$radar_values[[names_sigs[k]]][[names_datasets[i]]]
-        for (m in names(vals)) {
-          radar_plot_values[[names_sigs[k]]][[names_datasets[i]]][m] <- vals[m]
-        }
-      }
-    }
-  }, error = function(e) {})
-
-  tryCatch({
-    r <- compute_compactness(gene_sigs_list, names_sigs, mRNA_expr_matrix, names_datasets)
-    for (k in seq_along(names_sigs)) {
-      for (i in seq_along(names_datasets)) {
-        vals <- r$radar_values[[names_sigs[k]]][[names_datasets[i]]]
-        for (m in names(vals)) {
-          radar_plot_values[[names_sigs[k]]][[names_datasets[i]]][m] <- vals[m]
-        }
-      }
-    }
-  }, error = function(e) {})
-
-  tryCatch({
-    r <- compute_metrics(gene_sigs_list, names_sigs, mRNA_expr_matrix, names_datasets)
-    for (k in seq_along(names_sigs)) {
-      for (i in seq_along(names_datasets)) {
-        vals <- r$radar_values[[names_sigs[k]]][[names_datasets[i]]]
-        for (m in names(vals)) {
-          radar_plot_values[[names_sigs[k]]][[names_datasets[i]]][m] <- vals[m]
-        }
-      }
-    }
-  }, error = function(e) {})
-
-  tryCatch({
-    r <- compute_stan(gene_sigs_list, names_sigs, mRNA_expr_matrix, names_datasets)
-    for (k in seq_along(names_sigs)) {
-      for (i in seq_along(names_datasets)) {
-        vals <- r$radar_values[[names_sigs[k]]][[names_datasets[i]]]
-        for (m in names(vals)) {
-          radar_plot_values[[names_sigs[k]]][[names_datasets[i]]][m] <- vals[m]
-        }
-      }
-    }
-  }, error = function(e) {})
-
-  # Build the radar chart matrix
   radar_result <- compute_radar(radar_plot_values, names_sigs, names_datasets)
   radar_result$output_table
 }
@@ -202,7 +233,9 @@
   if (missing(genes)) stop("Need to specify a list of genes.")
   if (missing(expressionMatrixList)) stop("Need to specify a list of expression matrices.")
 
-  par_apply <- .get_apply_fn(n_cores)
+  apply_spec <- .get_apply_fn(n_cores)
+  par_apply  <- apply_spec$apply_fn
+  n_parallel <- apply_spec$n_cores
 
   tryCatch({
     if (!dir.exists(outputDir)) dir.create(path = outputDir, showWarnings = FALSE, recursive = TRUE)
@@ -231,11 +264,14 @@
       })
       names(gene_sigs_list) <- paste0("NC", seq_len(rePower))
 
-      # Compute QC metrics for all random signatures IN MEMORY (no disk roundtrip)
+      # Compute QC metrics for all random signatures IN MEMORY (no disk roundtrip).
+      # Parallel chunking is applied inside .compute_qc_metrics_inmemory: for the
+      # negative-control path this splits signatures across workers.
       mRNA_expr_matrix <- list()
       mRNA_expr_matrix[[datasetName]] <- expressionMatrix
       metrics_table <- .compute_qc_metrics_inmemory(
-        gene_sigs_list, names(gene_sigs_list), mRNA_expr_matrix, c(datasetName))
+        gene_sigs_list, names(gene_sigs_list), mRNA_expr_matrix, c(datasetName),
+        par_apply = par_apply, n_parallel = n_parallel)
 
       cat("DONE\n", file = log.con)
 
@@ -267,12 +303,12 @@
       cat(paste(Sys.time(), "Computing Permutation Control (optimized)...", sep = " "),
           file = log.con, sep = "")
 
-      # OPTIMIZATION: Sparse permutation — only copy/permute signature gene rows
-      # Instead of copying the FULL expression matrix rePower times, we create
-      # lightweight permuted versions that share the non-signature rows.
-      expressionMatrix_perm_list <- par_apply(seq_len(rePower), function(i) {
+      # Sparse permutation — only copy/permute signature gene rows. Run serially
+      # because per-iteration work is microseconds: fork overhead of mclapply is
+      # a net loss here. The expensive compute step below is the one that runs
+      # in parallel.
+      expressionMatrix_perm_list <- lapply(seq_len(rePower), function(i) {
         perm_matrix <- expressionMatrix  # single copy (R's copy-on-modify)
-        # Generate per-column permutations of signature gene indices
         for (col.num in seq_len(ncol(expressionMatrix))) {
           perm_idx <- sample(seq_len(n_sig_genes))
           perm_matrix[genes_present, col.num] <-
@@ -282,13 +318,16 @@
       })
       names(expressionMatrix_perm_list) <- paste0("PC", seq_len(rePower))
 
-      # Compute QC metrics for all permuted datasets IN MEMORY
+      # Compute QC metrics for all permuted datasets IN MEMORY. Parallel chunking
+      # inside .compute_qc_metrics_inmemory splits datasets across workers here
+      # (n_sigs == 1, n_ds == rePower).
       gene_sigs_list <- list()
       gene_sigs_list[[colnames(genes)]] <- genes
 
       metrics_table <- .compute_qc_metrics_inmemory(
         gene_sigs_list, names(gene_sigs_list),
-        expressionMatrix_perm_list, names(expressionMatrix_perm_list))
+        expressionMatrix_perm_list, names(expressionMatrix_perm_list),
+        par_apply = par_apply, n_parallel = n_parallel)
 
       cat("DONE\n", file = log.con)
 

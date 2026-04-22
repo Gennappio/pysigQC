@@ -57,7 +57,11 @@
   }, error = function(err) {})
 
   tryCatch({
-    metrics_result <- compute_metrics(gene_sigs_list, names_sigs, mRNA_expr_matrix, names_datasets)
+    # radar_only = TRUE: skip GSVA / mclust / score_cor_mats — those outputs are
+    # only consumed by plot_metrics, never by the negative/permutation control
+    # summarization. Drops this block from ~1.3s to ~0.09s per call.
+    metrics_result <- compute_metrics(gene_sigs_list, names_sigs, mRNA_expr_matrix,
+                                      names_datasets, radar_only = TRUE)
     for (k in seq_along(names_sigs)) {
       for (i in seq_along(names_datasets)) {
         for (m in names(metrics_result$radar_values[[names_sigs[k]]][[names_datasets[i]]])) {
