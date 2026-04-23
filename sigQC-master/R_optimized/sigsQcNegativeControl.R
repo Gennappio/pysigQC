@@ -1,7 +1,7 @@
 # sigsQcNegativeControl.R — OPTIMIZED
 #
-# Optimized version of negative and permutation controls.
-# Key optimizations over the corrected version:
+# Optimized version of negative and permutation controls, layered on R_refactored/.
+# Key optimizations over the refactored version:
 #   1. No file I/O roundtrip — QC metrics computed in memory (no radarchart_table.txt
 #      write/read between compute and summarize)
 #   2. Sparse permutation — only permute signature gene rows, not full matrix copies
@@ -12,16 +12,22 @@
 #   5. BUG-1 fix: sample() instead of runif()
 #   6. Deduplicated summary/plotting logic via helper functions
 #
-# Compute backend: uses eval_*_loc_noplots() from R_corrected/compute_without_plots.R
-# (the R_refactored/compute_*() variants showed a 6-14x per-module regression on the
-# medium fixture, so we delegate to the faster noplots layer here).
-# Radar matrix assembly uses compute_radar() from R_refactored/make_radar_chart_loc.R
-# (in-memory, no disk write).
+# Compute backend: uses compute_var()/compute_expr()/compute_compactness()/
+# compute_stan()/compute_metrics() from R_refactored/. Radar matrix assembly uses
+# compute_radar() from R_refactored/make_radar_chart_loc.R (in-memory, no disk write).
 #
 # Source these before using this file:
-#   source("R_corrected/compute_without_plots.R")   # eval_*_loc_noplots
-#   source("R_refactored/make_radar_chart_loc.R")   # compute_radar
-#   source("R_corrected/boxplot.matrix2.R")         # .boxplot.matrix2
+#   source("R_refactored/eval_var_loc.R")         # compute_var
+#   source("R_refactored/eval_expr_loc.R")        # compute_expr
+#   source("R_refactored/eval_compactness_loc.R") # compute_compactness
+#   source("R_refactored/eval_stan_loc.R")        # compute_stan
+#   source("R_refactored/compare_metrics_loc.R")  # compute_metrics
+#   source("R_refactored/make_radar_chart_loc.R") # compute_radar
+#   source("R_refactored/boxplot.matrix2.R")      # .boxplot.matrix2
+#
+# Precondition: .assert_backend() at entry of .sigsQcNegativeControl_opt verifies
+# all required compute_* / compute_radar / .boxplot.matrix2 symbols are resolvable
+# and fails loudly if the caller forgot to source the backend.
 
 # ============================================================================
 # Helper: choose parallel backend. Default is serial (n_cores = 1) because
@@ -46,44 +52,79 @@
 }
 
 # ============================================================================
-# Helper: run all 5 eval_*_loc_noplots modules on a (sub_sigs, sub_ds) partition
-# and return a nested radar_plot_values list keyed by sig then dataset.
+# Helper: merge a compute_*()$radar_values nested list into an accumulator `rv`,
+# matching the refactored eval_*_loc merge contract (metric-by-metric assignment).
 # ============================================================================
-.run_noplots_chunk <- function(sub_sigs_list, sub_sig_names,
+.merge_radar_values <- function(rv, module_radar_values, sig_names, ds_names) {
+  for (sn in sig_names) {
+    for (dn in ds_names) {
+      metrics <- module_radar_values[[sn]][[dn]]
+      for (metric in names(metrics)) {
+        rv[[sn]][[dn]][metric] <- metrics[metric]
+      }
+    }
+  }
+  rv
+}
+
+# ============================================================================
+# Helper: run all 5 compute_*() modules on a (sub_sigs, sub_ds) partition and
+# return a nested radar_plot_values list keyed by sig then dataset. Errors from
+# any module propagate up with a stack trace (no silent swallowing).
+# ============================================================================
+.run_compute_chunk <- function(sub_sigs_list, sub_sig_names,
                                 sub_expr_list, sub_ds_names) {
+  # Match the refactored merge contract: sig level initialized as list(),
+  # dataset level left NULL so metric-by-metric assignment produces a named
+  # numeric vector (not a named list, which would break compute_radar).
   rv <- list()
   for (sn in sub_sig_names) rv[[sn]] <- list()
 
-  scratch_log <- tempfile(pattern = "sigqc_opt_log_", fileext = ".log")
-  log.con <- file(scratch_log, open = "a")
-  on.exit({ try(close(log.con), silent = TRUE); unlink(scratch_log) }, add = TRUE)
+  res_var <- compute_var(sub_sigs_list, sub_sig_names, sub_expr_list, sub_ds_names)
+  rv <- .merge_radar_values(rv, res_var$radar_values, sub_sig_names, sub_ds_names)
 
-  tryCatch({ rv <- eval_var_loc_noplots(
-    sub_sigs_list, sub_sig_names, sub_expr_list, sub_ds_names,
-    out_dir = tempdir(), file = log.con, showResults = FALSE,
-    radar_plot_values = rv) }, error = function(e) {})
+  res_expr <- compute_expr(sub_sigs_list, sub_sig_names, sub_expr_list, sub_ds_names,
+                           thresholds = NULL)
+  rv <- .merge_radar_values(rv, res_expr$radar_values, sub_sig_names, sub_ds_names)
 
-  tryCatch({ rv <- eval_expr_loc_noplots(
-    sub_sigs_list, sub_sig_names, sub_expr_list, sub_ds_names,
-    thresholds = NULL, out_dir = tempdir(), file = log.con, showResults = FALSE,
-    radar_plot_values = rv) }, error = function(e) {})
+  res_comp <- compute_compactness(sub_sigs_list, sub_sig_names, sub_expr_list, sub_ds_names,
+                                  logged = TRUE, origin = NULL)
+  rv <- .merge_radar_values(rv, res_comp$radar_values, sub_sig_names, sub_ds_names)
 
-  tryCatch({ rv <- eval_compactness_loc_noplots(
-    sub_sigs_list, sub_sig_names, sub_expr_list, sub_ds_names,
-    out_dir = tempdir(), file = log.con, showResults = FALSE,
-    radar_plot_values = rv, logged = TRUE, origin = NULL) }, error = function(e) {})
+  res_met <- compute_metrics(sub_sigs_list, sub_sig_names, sub_expr_list, sub_ds_names,
+                             radar_only = TRUE)
+  rv <- .merge_radar_values(rv, res_met$radar_values, sub_sig_names, sub_ds_names)
 
-  tryCatch({ rv <- compare_metrics_loc_noplots(
-    sub_sigs_list, sub_sig_names, sub_expr_list, sub_ds_names,
-    out_dir = tempdir(), file = log.con, showResults = FALSE,
-    radar_plot_values = rv) }, error = function(e) {})
-
-  tryCatch({ rv <- eval_stan_loc_noplots(
-    sub_sigs_list, sub_sig_names, sub_expr_list, sub_ds_names,
-    out_dir = tempdir(), file = log.con, showResults = FALSE,
-    radar_plot_values = rv) }, error = function(e) {})
+  res_stan <- compute_stan(sub_sigs_list, sub_sig_names, sub_expr_list, sub_ds_names)
+  rv <- .merge_radar_values(rv, res_stan$radar_values, sub_sig_names, sub_ds_names)
 
   rv
+}
+
+# ============================================================================
+# Helper: precondition guard. Verifies that every backend symbol this file calls
+# is resolvable in the current search path, and fails loudly with an actionable
+# message otherwise. Call at the entry of the top-level dispatcher.
+# ============================================================================
+.assert_backend <- function() {
+  required <- c("compute_var", "compute_expr", "compute_compactness",
+                "compute_stan", "compute_metrics", "compute_radar",
+                ".boxplot.matrix2")
+  caller_env <- parent.frame()
+  missing_fns <- required[!vapply(required, function(x)
+    exists(x, envir = caller_env, mode = "function", inherits = TRUE),
+    logical(1))]
+  if (length(missing_fns) > 0L) {
+    stop(sprintf(
+      paste0("R_optimized/sigsQcNegativeControl.R: missing backend function(s): %s.\n",
+             "Source R_refactored/eval_var_loc.R, eval_expr_loc.R, ",
+             "eval_compactness_loc.R, eval_stan_loc.R, compare_metrics_loc.R, ",
+             "make_radar_chart_loc.R and boxplot.matrix2.R before calling ",
+             ".sigsQcNegativeControl_opt()."),
+      paste(missing_fns, collapse = ", ")),
+      call. = FALSE)
+  }
+  invisible(TRUE)
 }
 
 # ============================================================================
@@ -110,14 +151,14 @@
   if (chunk_on_sigs) {
     per_chunk <- par_apply(chunk_idx_list, function(sig_idx) {
       sub_names <- names_sigs[sig_idx]
-      .run_noplots_chunk(gene_sigs_list[sub_names], sub_names,
-                          mRNA_expr_matrix, names_datasets)
+      .run_compute_chunk(gene_sigs_list[sub_names], sub_names,
+                         mRNA_expr_matrix, names_datasets)
     })
   } else {
     per_chunk <- par_apply(chunk_idx_list, function(ds_idx) {
       sub_names <- names_datasets[ds_idx]
-      .run_noplots_chunk(gene_sigs_list, names_sigs,
-                          mRNA_expr_matrix[sub_names], sub_names)
+      .run_compute_chunk(gene_sigs_list, names_sigs,
+                         mRNA_expr_matrix[sub_names], sub_names)
     })
   }
 
@@ -198,31 +239,31 @@
                                         studyName = "MyStudy", numResampling = 50,
                                         warningsFile = NULL, logFile = NULL,
                                         n_cores = NULL) {
-  if (missing(genesList)) stop("Need to specify a list of genes.")
-  if (missing(expressionMatrixList)) stop("Need to specify a list of expression matrices.")
-  if (missing(outputDir)) stop("Need to specify an output directory.")
+  .assert_backend()
+
+  stopifnot(
+    !missing(genesList), is.list(genesList), length(genesList) > 0L,
+    !missing(expressionMatrixList), is.list(expressionMatrixList),
+    length(expressionMatrixList) > 0L,
+    !missing(outputDir), is.character(outputDir), length(outputDir) == 1L,
+    is.numeric(numResampling), length(numResampling) == 1L, numResampling >= 1L
+  )
   if (is.null(warningsFile)) warningsFile <- file.path(outputDir, "warnings.log")
   if (is.null(logFile)) logFile <- file.path(outputDir, "log.log")
 
   if (!dir.exists(outputDir)) dir.create(path = outputDir, showWarnings = FALSE, recursive = TRUE)
 
-  tryCatch({
-    log.con <- file(logFile, open = "a")
-    warnings.con <- file(warningsFile, open = "a")
+  log.con <- file(logFile, open = "a")
+  warnings.con <- file(warningsFile, open = "a")
+  on.exit({ try(close(log.con), silent = TRUE)
+            try(close(warnings.con), silent = TRUE) }, add = TRUE)
 
-    for (genes.i in seq_along(genesList)) {
-      genes <- as.matrix(genesList[[genes.i]])
-      colnames(genes) <- names(genesList)[genes.i]
-      .sigQcNegativeControl_opt(genes, expressionMatrixList, outputDir, studyName,
-                                rePower = numResampling, warningsFile, logFile, n_cores)
-    }
-  }, error = function(err) {
-    cat(paste(Sys.time(), "Error in sigQcNegativeControl:", err, sep = " "),
-        file = log.con, sep = "\n")
-  }, finally = {
-    close(log.con)
-    close(warnings.con)
-  })
+  for (genes.i in seq_along(genesList)) {
+    genes <- as.matrix(genesList[[genes.i]])
+    colnames(genes) <- names(genesList)[genes.i]
+    .sigQcNegativeControl_opt(genes, expressionMatrixList, outputDir, studyName,
+                              rePower = numResampling, warningsFile, logFile, n_cores)
+  }
 }
 
 # ============================================================================
@@ -230,19 +271,24 @@
 # ============================================================================
 .sigQcNegativeControl_opt <- function(genes, expressionMatrixList, outputDir, studyName,
                                        rePower = 50, warningsFile, logFile, n_cores = NULL) {
-  if (missing(genes)) stop("Need to specify a list of genes.")
-  if (missing(expressionMatrixList)) stop("Need to specify a list of expression matrices.")
+  stopifnot(
+    !missing(genes), is.matrix(genes) || is.data.frame(genes), nrow(genes) >= 2L,
+    !missing(expressionMatrixList), is.list(expressionMatrixList),
+    length(expressionMatrixList) > 0L,
+    is.numeric(rePower), length(rePower) == 1L, rePower >= 1L
+  )
 
   apply_spec <- .get_apply_fn(n_cores)
   par_apply  <- apply_spec$apply_fn
   n_parallel <- apply_spec$n_cores
 
-  tryCatch({
-    if (!dir.exists(outputDir)) dir.create(path = outputDir, showWarnings = FALSE, recursive = TRUE)
-    log.con <- file(logFile, open = "a")
-    warnings.con <- file(warningsFile, open = "a")
+  if (!dir.exists(outputDir)) dir.create(path = outputDir, showWarnings = FALSE, recursive = TRUE)
+  log.con <- file(logFile, open = "a")
+  warnings.con <- file(warningsFile, open = "a")
+  on.exit({ try(close(log.con), silent = TRUE)
+            try(close(warnings.con), silent = TRUE) }, add = TRUE)
 
-    len <- nrow(genes)
+  len <- nrow(genes)
     datasets.num <- length(expressionMatrixList)
     datasets.names <- names(expressionMatrixList)
 
@@ -346,12 +392,4 @@
                          file = file.path(summary_out_dir, "perm_controls_summary_table.txt"),
                          row.names = TRUE, col.names = TRUE, sep = ",")
     }
-
-  }, error = function(err) {
-    cat(paste(Sys.time(), "Error in sigQcNegativeControl:", err, sep = " "),
-        file = log.con, sep = "\n")
-  }, finally = {
-    close(log.con)
-    close(warnings.con)
-  })
 }
