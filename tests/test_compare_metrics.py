@@ -10,7 +10,8 @@ from pysigqc.compare_metrics import compute_metrics
 def test_structure(signatures, datasets, names_sigs, names_datasets):
     result = compute_metrics(signatures, names_sigs, datasets, names_datasets)
     assert set(result.keys()) == {"radar_values", "scores", "pca_results",
-                                   "score_cor_mats", "mixture_models", "elapsed_seconds"}
+                                   "score_cor_mats", "mixture_models",
+                                   "enrichment_scores", "elapsed_seconds"}
 
 
 def test_4_radar_metrics(signatures, datasets, names_sigs, names_datasets):
