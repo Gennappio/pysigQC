@@ -53,14 +53,14 @@ def _compute_qc_metrics(
         ("stan", lambda: compute_stan(gene_sigs_list, names_sigs, mRNA_expr_matrix, names_datasets)),
     ]
 
+    # Errors from any module propagate with a stack trace — no silent swallowing,
+    # matching the R_optimized fix (commit e4842eb). Swallowing here caused a
+    # silent zero-fill of the radar metrics in the negative/permutation controls.
     for name, compute_fn in modules:
-        try:
-            result = compute_fn()
-            for sig in names_sigs:
-                for ds in names_datasets:
-                    radar_values[sig][ds].update(result["radar_values"][sig][ds])
-        except Exception:
-            pass
+        result = compute_fn()
+        for sig in names_sigs:
+            for ds in names_datasets:
+                radar_values[sig][ds].update(result["radar_values"][sig][ds])
 
     radar_result = compute_radar(radar_values, names_sigs, names_datasets)
     return {
@@ -88,10 +88,13 @@ def _run_single_nc_iteration(
     random_sig = {sig_name: random_genes}
     result = _compute_qc_metrics(random_sig, [sig_name], {ds_name: expr_df}, [ds_name])
 
-    # Extract the single row of metrics
-    if result["output_table"].shape[0] > 0:
-        return result["output_table"].iloc[0].values
-    return np.full(len(ALL_METRICS), np.nan)
+    # Empty output_table indicates a real bug in _compute_qc_metrics — fail loudly.
+    if result["output_table"].shape[0] == 0:
+        raise RuntimeError(
+            f"_compute_qc_metrics returned empty output_table for NC iteration "
+            f"(sig={sig_name}, ds={ds_name})"
+        )
+    return result["output_table"].iloc[0].values
 
 
 def _run_single_perm_iteration(
@@ -119,9 +122,13 @@ def _run_single_perm_iteration(
     perm_sig = {sig_name: gene_list}
     result = _compute_qc_metrics(perm_sig, [sig_name], {ds_name: perm_df}, [ds_name])
 
-    if result["output_table"].shape[0] > 0:
-        return result["output_table"].iloc[0].values
-    return np.full(len(ALL_METRICS), np.nan)
+    # Empty output_table indicates a real bug in _compute_qc_metrics — fail loudly.
+    if result["output_table"].shape[0] == 0:
+        raise RuntimeError(
+            f"_compute_qc_metrics returned empty output_table for permutation iteration "
+            f"(sig={sig_name}, ds={ds_name})"
+        )
+    return result["output_table"].iloc[0].values
 
 
 def run_negative_control(

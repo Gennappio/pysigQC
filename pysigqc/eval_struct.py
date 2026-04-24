@@ -7,6 +7,8 @@ as a substitute for R's biclust BCCC method.
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pandas as pd
 from sklearn.cluster import SpectralBiclustering
@@ -46,8 +48,13 @@ def _compute_biclust(data_matrix: pd.DataFrame, inter: list[str]) -> dict:
             model.fit(binarized)
             biclust_result = model
             n_biclusters = n_clusters
-    except Exception:
-        pass
+    except (ValueError, np.linalg.LinAlgError) as e:
+        # SpectralBiclustering can fail on degenerate (low-rank / constant) data.
+        # Matches R's biclust::BCCC tryCatch in R_refactored/eval_struct_loc.R.
+        warnings.warn(
+            f"SpectralBiclustering failed: {type(e).__name__}: {e}",
+            RuntimeWarning, stacklevel=2,
+        )
 
     return {
         "z_scores": pd.DataFrame(sig_scores, index=inter, columns=data_matrix.columns),

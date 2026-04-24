@@ -54,14 +54,14 @@ def _compute_qc_metrics(
         ("stan", lambda: compute_stan(gene_sigs_list, names_sigs, mRNA_expr_matrix, names_datasets)),
     ]
 
+    # Errors from any module propagate with a stack trace — no silent swallowing,
+    # matching the R_optimized fix (commit e4842eb). Swallowing here caused a
+    # silent zero-fill of the radar metrics in the negative/permutation controls.
     for name, compute_fn in modules:
-        try:
-            result = compute_fn()
-            for sig in names_sigs:
-                for ds in names_datasets:
-                    radar_values[sig][ds].update(result["radar_values"][sig][ds])
-        except Exception:
-            pass
+        result = compute_fn()
+        for sig in names_sigs:
+            for ds in names_datasets:
+                radar_values[sig][ds].update(result["radar_values"][sig][ds])
 
     # Assemble radar chart
     radar_result = compute_radar(radar_values, names_sigs, names_datasets)

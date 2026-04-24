@@ -114,7 +114,13 @@ def compute_metrics(
                     pca1_scores, props_of_variances, pca_obj = _fit_pca(
                         sig_clean_T, sig_clean.shape[0]
                     )
-            except Exception:
+            except (np.linalg.LinAlgError, ValueError) as e:
+                # Narrow to numerical failures R's prcomp equivalent can raise.
+                # Matches R_refactored/compare_metrics_loc.R:52.
+                warnings.warn(
+                    f"PCA failed for sig={sig!r} ds={ds!r}: {type(e).__name__}: {e}",
+                    RuntimeWarning, stacklevel=2,
+                )
                 pca1_scores = None
                 pca_obj = None
 
@@ -183,8 +189,15 @@ def compute_metrics(
                                     if bic < best_bic:
                                         best_bic = bic
                                         best_model = gm
-                                except Exception:
-                                    pass
+                                except (ValueError, np.linalg.LinAlgError) as e:
+                                    # BIC sweep: individual k-value fits can fail on
+                                    # degenerate data; other k values may still succeed.
+                                    warnings.warn(
+                                        f"GaussianMixture(n_components={k}) failed for "
+                                        f"sig={sig!r} ds={ds!r} score={score_name!r}: "
+                                        f"{type(e).__name__}: {e}",
+                                        RuntimeWarning, stacklevel=2,
+                                    )
                             mm[score_name] = {
                                 "best_model": best_model,
                                 "bic_values": bic_values,

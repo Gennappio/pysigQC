@@ -15,6 +15,7 @@ Matches R's eval_compactness_loc.R styling.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import matplotlib
@@ -27,6 +28,8 @@ from scipy.stats import gaussian_kde
 
 from ._colors import dataset_colors, sig_linestyle
 from ._style import save_pdf, dynamic_fontsize
+
+logger = logging.getLogger(__name__)
 
 
 # R's gplots::colorpanel(100,"blue","white","red")
@@ -178,8 +181,13 @@ def plot_compactness(
                     g.ax_heatmap.set_facecolor("#D3D3D3")
                     pp.savefig(g.fig, bbox_inches="tight")
                     plt.close(g.fig)
-                except Exception:
-                    pass
+                except (ValueError, np.linalg.LinAlgError) as e:
+                    # Individual heatmap can fail on degenerate data; skip it
+                    # but keep building the rest of the PDF. Logged, not silent.
+                    logger.warning(
+                        "clustermap failed for sig=%r ds=%r: %s: %s",
+                        sig, ds, type(e).__name__, e,
+                    )
     paths.append(pdf_path)
 
     # --- 2. Autocorrelation density overlay ---

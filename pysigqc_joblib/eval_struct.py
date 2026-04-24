@@ -8,6 +8,8 @@ SpectralBiclustering to avoid O(n^3) eigendecomposition.
 
 from __future__ import annotations
 
+import warnings
+
 import numpy as np
 import pandas as pd
 from sklearn.cluster import SpectralBiclustering
@@ -60,8 +62,13 @@ def _compute_biclust(arr: np.ndarray, inter: list[str], col_names: list[str],
             model.fit(binarized_for_biclust)
             biclust_result = model
             n_biclusters = n_clusters
-    except Exception:
-        pass
+    except (ValueError, np.linalg.LinAlgError) as e:
+        # SpectralBiclustering can fail on degenerate (low-rank / constant) data.
+        # Matches R's biclust::BCCC tryCatch in R_refactored/eval_struct_loc.R.
+        warnings.warn(
+            f"SpectralBiclustering failed: {type(e).__name__}: {e}",
+            RuntimeWarning, stacklevel=2,
+        )
 
     return {
         "z_scores": pd.DataFrame(z_scores, index=inter, columns=col_names),

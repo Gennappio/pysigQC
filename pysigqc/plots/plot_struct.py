@@ -9,6 +9,7 @@ heatmap (matching gplots::heatmap.2 and biclust::heatmapBC).
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import matplotlib
@@ -20,6 +21,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 
 from ._style import save_pdf
 
+logger = logging.getLogger(__name__)
 
 _HEATMAP_CMAP = "RdBu_r"
 
@@ -127,8 +129,13 @@ def plot_struct(
                 g.savefig(out_dir / fname, format="pdf", bbox_inches="tight")
                 plt.close(g.fig)
                 paths.append(out_dir / fname)
-            except Exception:
-                pass
+            except (ValueError, np.linalg.LinAlgError) as e:
+                # Individual clustering heatmap can fail on degenerate data;
+                # skip it but keep producing the other heatmaps.
+                logger.warning(
+                    "clustermap failed for sig=%r ds=%r: %s: %s",
+                    sig, ds, type(e).__name__, e,
+                )
 
     # --- 2 & 3. Biclustering heatmaps ---
     any_biclusters = struct_result.get("any_biclusters", False)
