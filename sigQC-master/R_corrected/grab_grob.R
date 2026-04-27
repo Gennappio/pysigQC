@@ -9,6 +9,15 @@
 grab_grob <- function(){
   # require(gridGraphics)
   # require(grid)
-  gridGraphics::grid.echo()
-  grid::grid.grab()
+  # In non-interactive Rscript runs gridGraphics::grid.echo() emits the warning
+  # "No graphics to replay" and grid::grid.grab() then returns NULL. A NULL grob
+  # propagates into draw.heatmaps() -> grid::editGrob(NULL, ...) which raises
+  # 'no applicable method for validGrob applied to NULL', aborting eval_*_loc()
+  # before the radar values are stored. Coerce any failure mode to a nullGrob()
+  # so the surrounding lapply finishes and the caller's metric assignments run.
+  g <- tryCatch({
+    gridGraphics::grid.echo()
+    grid::grid.grab()
+  }, error = function(e) NULL)
+  if (is.null(g) || !grid::is.grob(g)) grid::nullGrob() else g
 }
