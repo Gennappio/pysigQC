@@ -1,0 +1,35 @@
+# Conda environment for the sigQC R reference stack used by TEST_stud/test3.py.
+#
+# Create with:   conda env create -f environment-r.yml
+# Update with:   conda env update -f environment-r.yml --prune
+#
+# r-base is left unpinned so the solver can pick the latest r-* / bioconductor-*
+# combination available on conda-forge + bioconda. r-biclust is pinned to the
+# archived 2.0.3.1 release (the version the original sigQC reference was
+# validated against; current CRAN 2.0.4 has known issues).
+name: sigqc-r
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - r-base
+  # CRAN packages used by sigQC
+  - r-fmsb
+  - r-moments
+  - r-mclust
+  - r-circlize
+  - r-gplots
+  - r-gridgraphics
+  - r-biclust=2.0.3.1
+  - r-flexclust
+  - r-additivitytests
+  # R testing / package tooling
+  - r-testthat
+  - r-devtools
+  # Bioconductor packages used by sigQC and TEST_stud/test3.R
+  - bioconductor-gsva
+  - bioconductor-complexheatmap
+  - bioconductor-biomart
+  - bioconductor-rankprod
+  - bioconductor-annotationdbi
+  - bioconductor-annotate

@@ -114,6 +114,18 @@ See **[PLOTS_GUIDE.md](PLOTS_GUIDE.md)** for detailed interpretation of each plo
 - matplotlib, seaborn
 - joblib (for parallelization)
 
+## Installing the R reference env (optional)
+
+The Python port runs standalone. The R reference stack is only needed for the cross-validation smoke test (`TEST_stud/test3.py`) and for running the original sigQC against your own data. It is fully described by [`environment-r.yml`](environment-r.yml) and installed via conda:
+
+```bash
+./install_r.sh                 # creates conda env "sigqc-r" from environment-r.yml
+./install_r.sh my-env-name     # custom env name
+./install_r.sh --update        # refresh an existing env
+```
+
+R itself, every CRAN dependency, and every Bioconductor dependency (GSVA, ComplexHeatmap, biomaRt, RankProd, ...) come from `conda-forge` + `bioconda` — no system libraries or `BiocManager` calls required. See [TESTS_PYTHON.md](TESTS_PYTHON.md) for how to point `test3.py` at the resulting env without activating it.
+
 ## Citation
 
 If you use sigQC in your research, please cite:
